@@ -1,0 +1,44 @@
+# Local development infrastructure: Postgres + Redis.
+# From the repo root:
+#   npm run db:up      (docker compose -f infra/docker-compose.yml up -d)
+#   npm run db:down
+#
+# Containers use fixed names so a second checkout fails loudly instead of
+# silently connecting to the wrong database. Data lives in named volumes.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: drillke-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: drillke
+      POSTGRES_PASSWORD: drillke
+      POSTGRES_DB: drillke
+    ports:
+      - "5432:5432"
+    volumes:
+      - drillke-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drillke"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: drillke-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - drillke-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  drillke-pgdata:
+  drillke-redisdata:
