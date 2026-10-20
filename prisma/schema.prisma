@@ -1,0 +1,398 @@
+// DrillKe — Prisma schema (v1)
+// See docs/architecture.md §4 for the data model and modelling decisions.
+//
+// Rules of note:
+//   - LyricVersion is immutable once approved; lines/annotations hang off it.
+//   - Songs reference media (YouTube) and never host it.
+//   - Artists and DJs are separate entities; a person can be both.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  member
+  contributor
+  moderator
+  admin
+}
+
+enum Language {
+  sheng
+  swahili
+  english
+  mixed
+}
+
+enum SongStatus {
+  draft
+  pending
+  published
+  unpublished
+}
+
+/// Lifecycle of a lyrics submission. `published` is terminal for a version;
+/// a later edit creates a new submission rather than reopening this one.
+enum SubmissionStatus {
+  draft
+  pending
+  changes_requested
+  approved
+  published
+  rejected
+  unpublished
+}
+
+/// Whether a lyric version carries per-line timing. Explicit, because the UI
+/// must never imply lyrics are synced when they are not.
+enum SyncStatus {
+  unsynchronized
+  synchronized
+}
+
+enum PodcastPlatform {
+  youtube
+  spotify
+  anchor
+  other
+}
+
+/// Categories a report can target. The target itself is (targetType,targetId)
+/// rather than a foreign key per entity — see docs/architecture.md §4.
+enum ReportTargetType {
+  song
+  lyric_version
+  annotation
+  artist
+  dj
+  podcast_episode
+  event
+  user
+}
+
+enum ReportStatus {
+  open
+  reviewing
+  resolved
+  dismissed
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  displayName  String
+  passwordHash String?
+  role         Role     @default(member)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  submissions LyricsSubmission[]
+  reports     Report[]
+  auditLogs   AuditLog[]
+
+  @@index([role])
+}
+
+model Artist {
+  id               String   @id @default(cuid())
+  slug             String   @unique
+  name             String
+  bio              String?
+  imageUrl         String?
+  youtubeChannelId String?  @unique
+  verified         Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  links    ArtistLink[]
+  songs    SongArtist[]
+  episodes PodcastEpisodeArtist[]
+  events   EventArtist[]
+
+  @@index([name])
+}
+
+model ArtistLink {
+  id       String @id @default(cuid())
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  label    String
+  url      String
+
+  @@index([artistId])
+}
+
+model Dj {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  bio       String?
+  imageUrl  String?
+  city      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  links   DjLink[]
+  tracks  DjTrack[]
+  events  EventDj[]
+
+  @@index([name])
+  @@index([city])
+}
+
+model DjLink {
+  id     String @id @default(cuid())
+  djId   String
+  dj     Dj     @relation(fields: [djId], references: [id], onDelete: Cascade)
+  label  String
+  url    String
+
+  @@index([djId])
+}
+
+/// A song a DJ is known to spin — a curated association, not a play count.
+model DjTrack {
+  djId   String
+  dj     Dj   @relation(fields: [djId], references: [id], onDelete: Cascade)
+  songId String
+  song   Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+  rank   Int  @default(0)
+
+  @@id([djId, songId])
+  @@index([songId])
+}
+
+model Song {
+  id             String     @id @default(cuid())
+  slug           String     @unique
+  title          String
+  youtubeVideoId String
+  language       Language   @default(mixed)
+  releaseDate    DateTime?  @db.Date
+  durationMs     Int?
+  status         SongStatus @default(draft)
+  // Denormalised for catalogue sorting without joining versions.
+  syncedVersionId String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  artists    SongArtist[]
+  versions   LyricVersion[]
+  djTracks   DjTrack[]
+  episodes   PodcastEpisodeSong[]
+
+  @@index([status, releaseDate])
+  @@index([title])
+  // One published song per video. Drafts may reuse a video id (duplicates are
+  // caught in review), so uniqueness is enforced at the application layer too.
+  @@index([youtubeVideoId])
+}
+
+/// Join table so a song can credit a primary artist plus features.
+model SongArtist {
+  songId     String
+  song       Song   @relation(fields: [songId], references: [id], onDelete: Cascade)
+  artistId   String
+  artist     Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  isPrimary  Boolean @default(true)
+  position   Int    @default(0)
+
+  @@id([songId, artistId])
+  @@index([artistId])
+}
+
+/// An immutable, reviewable version of a song's lyrics. Approving an edit
+/// creates a new row; the previous one stays queryable for rollback.
+model LyricVersion {
+  id           String       @id @default(cuid())
+  songId       String
+  song         Song         @relation(fields: [songId], references: [id], onDelete: Cascade)
+  version      Int
+  syncStatus   SyncStatus   @default(unsynchronized)
+  source       String       @default("community")
+  published    Boolean      @default(false)
+  publishedAt  DateTime?
+  createdAt    DateTime     @default(now())
+
+  lines       LyricLine[]
+  annotations Annotation[]
+
+  @@unique([songId, version])
+  @@index([songId, published])
+}
+
+/// A single lyric line. `startMs` is -1 when the version is unsynchronized,
+/// so untimed lines keep their order without a nullable sort key.
+model LyricLine {
+  id        String       @id @default(cuid())
+  versionId String
+  version   LyricVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  index     Int
+  startMs   Int          @default(-1)
+  text      String
+
+  @@unique([versionId, index])
+  @@index([versionId, startMs])
+}
+
+model Annotation {
+  id          String       @id @default(cuid())
+  versionId   String
+  version     LyricVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  phrase      String
+  explanation String
+  // 0-based line pointer, resolved from the phrase when the author omitted it.
+  lineIndex   Int?
+
+  @@index([versionId])
+}
+
+model LyricsSubmission {
+  id         String           @id @default(cuid())
+  songId     String
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status     SubmissionStatus @default(pending)
+  // Raw Markdown as submitted — the audit record of what was actually sent.
+  markdown   String
+  note       String?
+  reviewerId String?
+  reviewNote String?
+  reviewedAt DateTime?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@index([songId, status])
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+}
+
+model Podcast {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  description String?
+  hostName    String?
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  episodes PodcastEpisode[]
+}
+
+model PodcastEpisode {
+  id          String          @id @default(cuid())
+  podcastId   String
+  podcast     Podcast         @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  number      Int
+  title       String
+  description String?
+  publishedAt DateTime
+  durationMs  Int?
+  externalUrl String
+  platform    PodcastPlatform @default(youtube)
+
+  songs   PodcastEpisodeSong[]
+  artists PodcastEpisodeArtist[]
+
+  @@unique([podcastId, number])
+  @@index([publishedAt])
+}
+
+model PodcastEpisodeSong {
+  episodeId String
+  episode   PodcastEpisode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  songId    String
+  song      Song           @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@id([episodeId, songId])
+  @@index([songId])
+}
+
+model PodcastEpisodeArtist {
+  episodeId String
+  episode   PodcastEpisode @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  artistId  String
+  artist    Artist         @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@id([episodeId, artistId])
+  @@index([artistId])
+}
+
+/// Informational only in v1 — ticketUrl is an outbound link, never a payment.
+model Event {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  description String?
+  venue       String?
+  city        String
+  startsAt    DateTime
+  endsAt      DateTime?
+  ticketUrl   String?
+  ticketPrice String?
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  artists EventArtist[]
+  djs     EventDj[]
+
+  @@index([startsAt])
+  @@index([city, startsAt])
+}
+
+model EventArtist {
+  eventId  String
+  event    Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, artistId])
+  @@index([artistId])
+}
+
+model EventDj {
+  eventId String
+  event   Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  djId    String
+  dj      Dj    @relation(fields: [djId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, djId])
+  @@index([djId])
+}
+
+model Report {
+  id         String           @id @default(cuid())
+  reporterId String?
+  reporter   User?            @relation(fields: [reporterId], references: [id], onDelete: SetNull)
+  targetType ReportTargetType
+  targetId   String
+  reason     String
+  detail     String?
+  status     ReportStatus     @default(open)
+  createdAt  DateTime         @default(now())
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+}
+
+/// Append-only record of privileged actions (reviews, role changes, unpublish).
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+}

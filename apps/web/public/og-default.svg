@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0c0b0a"/>
+  <!-- brand wordmark -->
+  <text x="60" y="270" font-family="system-ui,sans-serif" font-weight="800" font-size="96" fill="#f4f1ec">DrillKe</text>
+  <!-- tagline -->
+  <text x="60" y="350" font-family="system-ui,sans-serif" font-size="40" fill="#9b958d">Read the bars while the music plays.</text>
+  <!-- sub-tagline -->
+  <text x="60" y="420" font-family="system-ui,sans-serif" font-size="32" fill="#ff4d1c">Kenyan drill · one track at a time</text>
+  <!-- accent strip -->
+  <rect x="0" y="590" width="1200" height="40" fill="#ff4d1c" opacity="0.7"/>
+</svg>

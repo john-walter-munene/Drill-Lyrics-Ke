@@ -1,0 +1,27 @@
+# Node
+node_modules
+build
+dist
+coverage
+*.log
+npm-debug.log*
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# Next
+.next
+out
+
+# Tests
+test-results
+playwright-report
+
+# Misc
+.DS_Store
