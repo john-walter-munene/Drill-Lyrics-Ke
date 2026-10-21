@@ -15,30 +15,53 @@ Thanks for helping. You do not need to be a developer to contribute.
 
 ## Developer workflow
 
-### Option A — Containerized (recommended)
+Everything runs in Docker. You need Docker Desktop and nothing else — no Node,
+no Postgres. Full details in [`docs/runbook.md`](docs/runbook.md).
+
+### Daily development
 
 ```bash
-cp .env.example .env
-npm run dev:stack      # hot-reloading web (:3000) & api (:4000) inside Docker
-npm run docker:check   # containerized typecheck + test + lint
+npm run dev:stack       # build + start; hot reload for api (:4000) and web (:3000)
+npm run dev:stack:ps    # both containers should report (healthy)
+npm run dev:stack:logs  # tail logs
+npm run dev:stack:down  # stop (database data is kept)
 ```
 
-### Option B — Local processes
+Edit files under `apps/` or `packages/` and the containers recompile — no
+restart or rebuild needed.
+
+### Before opening a PR
+
+```bash
+npm run typecheck   # TypeScript across all workspaces
+npm test            # pure-logic unit tests (no database needed)
+npm run lint
+```
+
+If you changed Dockerfiles, compose files or build config, also verify the
+production-shaped stack:
+
+```bash
+npm run stack:up && npm run stack:down
+```
+
+### Optional: local processes (no Docker)
+
+Requires Node ≥ 22 and a reachable Postgres 16.
 
 ```bash
 npm install
-cp .env.example .env
-npm run db:up
+cp .env.example .env     # point DATABASE_URL at your Postgres
 npm run prisma:migrate
 npm run db:seed
-npm run dev        # web  :3000
-npm run dev:api    # api  :4000
+npm run dev              # web  :3000
+npm run dev:api          # api  :4000
 ```
 
 1. Branch: `feat/short-description` or `fix/short-description`.
 2. Write tests for new logic — especially lyrics parsing and timing
    (`packages/shared`), which is pure and must stay dependency-free.
-3. Run `npm run docker:check` (or `npm run typecheck && npm test`) before opening a PR.
+3. Run the checks above before opening a PR.
 4. Open a PR describing the change, the motivation and any screenshots.
 
 ## Commit messages

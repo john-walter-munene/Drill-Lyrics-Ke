@@ -7,6 +7,7 @@ dist
 build
 **/build
 coverage
+**/*.tsbuildinfo
 test-results
 playwright-report
 .git

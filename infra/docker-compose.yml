@@ -1,44 +1,95 @@
-# Local development infrastructure: Postgres + Redis.
-# From the repo root:
-#   npm run db:up      (docker compose -f infra/docker-compose.yml up -d)
-#   npm run db:down
+# ─── DrillKe — the whole app in TWO containers ──────────────────────────────
 #
-# Containers use fixed names so a second checkout fails loudly instead of
-# silently connecting to the wrong database. Data lives in named volumes.
+#   docker compose up -d --build     start (build the first time)
+#   docker compose down              stop (data is kept)
+#   docker compose down -v           stop and wipe data + build cache
+#
+# Containers (visible in Docker Desktop under the `drill-lyrics-key` project):
+#
+#   drill-lyrics-key-api   backend: NestJS API + PostgreSQL 16 in ONE container
+#                          → http://localhost:4000/api/health/ready
+#                          → Postgres also reachable from the host on :5432
+#   drill-lyrics-key-web   frontend: Next.js production build
+#                          → http://localhost:3000
+#
+# The database runs inside the backend container on purpose: it keeps the stack
+# to two containers and makes `docker compose up` self-initialising (the
+# entrypoint creates the data dir, applies migrations and seeds). Database data
+# persists in the `pgdata` volume across restarts.
+#
+# Point compose at this file explicitly when running from the repo root:
+#   docker compose -f infra/docker-compose.yml up -d --build
+# (from inside infra/ the plain `docker compose up` form works too).
+#
+# Ports are overridable: create infra/.env (see infra/.env.example) or export
+# WEB_PORT / API_PORT / DB_PORT before running compose.
+
+name: drill-lyrics-key
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: drillke-postgres
+  # ── Backend: API + database ──────────────────────────────────────────────
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: drillke-api:latest
     restart: unless-stopped
     environment:
-      POSTGRES_USER: drillke
-      POSTGRES_PASSWORD: drillke
-      POSTGRES_DB: drillke
+      NODE_ENV: production
+      PORT: "4000"
+      # The API talks to the PostgreSQL server inside this same container.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-drillke}:${POSTGRES_PASSWORD:-drillke}@localhost:5432/${POSTGRES_DB:-drillke}?schema=public
+      POSTGRES_DB: ${POSTGRES_DB:-drillke}
+      POSTGRES_USER: ${POSTGRES_USER:-drillke}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-drillke}
+      # Schema is applied by the entrypoint; set to false to skip seeding.
+      SEED_ON_START: ${SEED_ON_START:-true}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@drillke.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-change-me-now}
+      JWT_SECRET: ${JWT_SECRET:-local-dev-only-secret-change-before-deploying-0000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      MAX_BODY_SIZE: ${MAX_BODY_SIZE:-512kb}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      EMBED_WORKER: ${EMBED_WORKER:-false}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
     ports:
-      - "5432:5432"
+      - "${API_PORT:-4000}:4000"   # API
+      - "${DB_PORT:-5432}:5432"    # PostgreSQL (psql, Prisma Studio, etc.)
     volumes:
-      - drillke-pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U drillke"]
-      interval: 5s
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/health/ready"]
+      interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 40s
 
-  redis:
-    image: redis:7-alpine
-    container_name: drillke-redis
+  # ── Frontend: Next.js production build ───────────────────────────────────
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        # NEXT_PUBLIC_* are baked into the browser bundle at build time.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+    image: drillke-web:latest
     restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
     ports:
-      - "6379:6379"
-    volumes:
-      - drillke-redisdata:/data
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 20s
 
 volumes:
-  drillke-pgdata:
-  drillke-redisdata:
+  pgdata:

@@ -7,7 +7,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { PrismaService } from './prisma.service';
 import { globalThrottleRule } from './common/throttling';
-import { RolesGuard } from './common/roles.guard';
+import { AuthZModule, RolesGuard } from './common/roles.guard';
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
 import { ArtistsModule } from './modules/artists/artists.module';
@@ -31,6 +31,8 @@ import { YoutubeSyncModule } from './workers/youtube-sync.module';
     // Sensitive routes (auth, submissions, reports) tighten this further via
     // @Throttle overrides from common/throttling.ts.
     ThrottlerModule.forRoot([globalThrottleRule()]),
+    // Provides RolesGuard (below and for @UseGuards) with a real Reflector.
+    AuthZModule,
     HealthModule,
     AuthModule,
     ArtistsModule,
@@ -47,7 +49,9 @@ import { YoutubeSyncModule } from './workers/youtube-sync.module';
   providers: [
     PrismaService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    { provide: APP_GUARD, useClass: RolesGuard },
+    // Use the AuthZModule-provided instance: its `Reflector` is constructed
+    // explicitly, so the guard works from root (APP_GUARD) scope.
+    { provide: APP_GUARD, useExisting: RolesGuard },
   ],
   exports: [PrismaService],
 })

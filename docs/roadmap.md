@@ -11,13 +11,13 @@ Scope for the current phase is fixed by [`product.md`](./product.md) §4.
 
 - [x] npm workspace monorepo (`apps/api`, `apps/web`, `packages/shared`)
 - [x] Prisma schema + baseline migration directory + seed
-- [x] Docker: Postgres dev compose + full stack compose + API image
+- [x] Docker: dev stack (hot reload) + production-shaped stack, two containers each
 - [x] CI workflow (lockfile, build, pure-logic tests)
 - [x] Docs: product, architecture, roadmap, lyrics format, API, deploy
-- [ ] `npm install` and first green `npm run build` on a developer machine
+- [x] `npm install` and first green `npm run build` on a developer machine
 
-**Exit:** `npm run db:up && npm run prisma:migrate && npm run dev` serves a page
-that talks to `/api/health`.
+**Exit:** `npm run dev:stack` serves the web app at `:3000` and the API at
+`:4000`, with `/api/health/ready` green (API + database).
 
 ## Phase 1 — The player (v1 core)
 

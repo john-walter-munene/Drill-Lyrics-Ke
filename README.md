@@ -51,7 +51,9 @@ V1 also includes `/about` and `/support` — who we are, how the model works, an
 | `docs/roadmap.md` | Phased delivery (0–7) with exit criteria |
 | `docs/lyrics-format.md` | The lyrics Markdown contract + parsed representation |
 | `docs/api.md` | API contract — routes, payloads, errors |
-| `docs/deploy.md` | Docker + production runbook and troubleshooting |
+| `docs/deploy.md` | Docker topology, environments, production deployment |
+| `docs/runbook.md` | **Day-to-day**: start/stop both stacks, verify, configure, troubleshoot |
+| `docs/runbook.md` | Start / stop / verify the two containers, ports, troubleshooting |
 | `docs/context.md` | Original long-form brief (context only, not a spec) |
 
 ```text
@@ -59,7 +61,9 @@ apps/api         NestJS modular monolith (modules/, common/, workers/)
 apps/web         Next.js App Router (app/, components/player, lib/)
 packages/shared  Types + pure lyrics logic shared by both apps
 prisma/          Schema, migrations, seed
-infra/           docker-compose (db only / full stack), Dockerfile.api
+infra/           docker-compose.yml (prod) + docker-compose.dev.yml (hot reload)
+                 + backend entrypoint + .env.example
+apps/api/scripts dev-watch.js  (tsc --watch + restart, emits decorator metadata)
 docs/            The documents above
 ```
 
@@ -79,43 +83,73 @@ docs/            The documents above
 
 ## Quick start
 
-### Option A — Docker dev stack (recommended, zero local setup)
+Docker is the default way to set up **and** develop DrillKe. It needs nothing on
+your machine except Docker Desktop — no Node, no Postgres, no version drift
+between engineers.
 
-Everything runs inside containers with hot-reload. No local Postgres or Node needed beyond what runs the `npm` commands.
-
-```bash
-cp .env.example .env           # review; defaults are fine for local dev
-
-npm run dev:stack              # builds containers + starts pg, redis, api, web
-#  web → http://localhost:3000
-#  api → http://localhost:4000/api/health/ready
-```
-
-Other useful commands:
+### Daily development (hot reload)
 
 ```bash
-npm run dev:stack:down         # stop containers (keeps database data)
-npm run dev:stack:reset        # stop + wipe volumes (fresh database)
-npm run dev:stack:logs         # tail api + web logs
+git clone <repo> && cd Drill-Lyrics-Ke
+npm run dev:stack        # build + start; logs stream in this terminal
 ```
 
-### Option B — Local processes (fastest inner loop)
+| Container | What runs | URL |
+|---|---|---|
+| `drill-lyrics-key-dev-api` | NestJS API **+ PostgreSQL 16** | http://localhost:4000/api/health/ready |
+| `drill-lyrics-key-dev-web` | Next.js dev server | http://localhost:3000 |
 
-Requires Node ≥ 22 and a local/Docker Postgres.
+Edit any file under `apps/` or `packages/` and the container recompiles and
+reloads — no restart, no rebuild. Migrations and seed data are applied
+automatically on first boot.
+
+```bash
+npm run dev:stack:bg     # start in the background instead
+npm run dev:stack:logs   # tail api + web
+npm run dev:stack:ps     # container status
+npm run dev:stack:down   # STOP (database data is kept)
+npm run dev:stack:reset  # stop and wipe the database
+```
+
+### Production-shaped run (compiled build)
+
+Same two-container shape, but runs the compiled artefacts — use this to check
+what will actually ship:
+
+```bash
+npm run stack:up         # build + start production images
+npm run stack:ps
+npm run stack:down
+npm run stack:reset      # stop + wipe database
+```
+
+Raw Docker equivalent (any of the above):
+
+```bash
+docker compose -f infra/docker-compose.dev.yml up --build   # dev
+docker compose -f infra/docker-compose.yml up -d --build    # prod-shaped
+docker compose -f infra/docker-compose.yml down             # stop
+```
+
+Both stacks appear in Docker Desktop as the projects **`drill-lyrics-key-dev`**
+and **`drill-lyrics-key`**. They are namespaced separately and can run at the
+same time only if you change ports in `infra/.env`.
+
+### Optional: local processes (no Docker)
+
+Only if you prefer it — requires Node ≥ 22 and a reachable Postgres 16.
 
 ```bash
 npm install
-cp .env.example .env
-
-npm run db:up                  # Postgres + Redis (Docker)
+cp .env.example .env          # point DATABASE_URL at your Postgres
 npm run prisma:migrate
 npm run db:seed
-
-npm run dev                    # web  → http://localhost:3000
-npm run dev:api                # api  → http://localhost:4000/api/health/ready
+npm run dev                   # web  → http://localhost:3000
+npm run dev:api               # api  → http://localhost:4000/api/health/ready
 ```
 
-Full runbook, environment variables and deployment: [`docs/deploy.md`](docs/deploy.md).
+Full runbook — ports, configuration, verification, troubleshooting:
+[`docs/runbook.md`](docs/runbook.md).
 
 ---
 
@@ -127,20 +161,21 @@ Full runbook, environment variables and deployment: [`docs/deploy.md`](docs/depl
 | `npm run build` | Build shared → api → web |
 | `npm run typecheck` | TypeScript across workspaces |
 | `npm test` | Unit tests (pure logic, no DB) |
-| `npm run dev:stack` | **Docker dev stack** (pg + redis + api + web, hot reload) |
-| `npm run dev:stack:down` | Stop dev stack (keeps data) |
-| `npm run dev:stack:reset` | Wipe dev stack volumes (fresh DB) |
-| `npm run dev:stack:logs` | Tail api + web container logs |
-| `npm run docker:build` | Build all Docker images (dev, api, web) |
-| `npm run docker:build:dev` | Build dev/tooling image (`infra/Dockerfile.dev`) |
+| `npm run dev:stack` | **Daily dev**: build + start containers with hot reload |
+| `npm run dev:stack:bg` | Same, in the background |
+| `npm run dev:stack:down` | Stop the dev stack (keeps database data) |
+| `npm run dev:stack:reset` | Stop and wipe the dev database |
+| `npm run dev:stack:logs` | Tail dev api + web logs |
+| `npm run dev:stack:ps` | Show dev container status |
+| `npm run stack:up` | **Production-shaped**: build + start compiled images |
+| `npm run stack:start` | Start existing production containers (no rebuild) |
+| `npm run stack:down` | Stop the production-shaped stack (keeps data) |
+| `npm run stack:reset` | Stop and wipe the production database |
+| `npm run stack:ps` | Show production container status |
+| `npm run stack:logs` | Tail production api + web logs |
+| `npm run docker:build` | Build both images without starting anything |
 | `npm run docker:build:api` | Build production API image (`Dockerfile`) |
 | `npm run docker:build:web` | Build production web image (`apps/web/Dockerfile`) |
-| `npm run docker:check` | Run containerized verification (typecheck + test + lint) |
-| `npm run docker:test` | Run unit tests inside the dev container |
-| `npm run docker:typecheck` | Run TypeScript check inside the dev container |
-| `npm run docker:lint` | Run workspace linting inside the dev container |
-| `npm run db:up` / `db:down` | Local Postgres + Redis only |
-| `npm run stack:up` / `stack:down` | Full production-like Docker stack |
 | `npm run prisma:migrate` | Create + apply a dev migration |
 | `npm run db:deploy` | Apply migrations (production) |
 | `npm run db:seed` / `db:reset` | Seed / reset + seed |
