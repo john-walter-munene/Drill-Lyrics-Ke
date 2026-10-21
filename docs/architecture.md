@@ -82,10 +82,13 @@ drillke/
 │   ├── migrations/
 │   └── seed.mjs
 ├── infra/
-│   ├── docker-compose.yml        # Postgres + Redis (local dev)
-│   ├── docker-compose.full.yml   # + api + web (one-command stack)
-│   └── Dockerfile.api            # prod API image (also runs the worker)
+│   ├── docker-compose.yml        # production-shaped: api (+ Postgres) + web
+│   ├── docker-compose.dev.yml    # same shape, hot reload for daily work
+│   ├── Dockerfile.dev            # dev image (Node toolchain + PostgreSQL 16)
+│   ├── docker-entrypoint.sh      # inits Postgres, migrates, seeds, starts the API
+│   └── .env.example              # optional port / secret overrides
 ├── docs/
+│   └── runbook.md                # start / stop / verify / troubleshoot
 ├── .github/workflows/ci.yml
 ├── .env.example
 ├── tsconfig.base.json

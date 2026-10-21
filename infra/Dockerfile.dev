@@ -1,35 +1,45 @@
 # syntax=docker/dockerfile:1
-# Development image for DrillKe — used by infra/docker-compose.dev.yml.
+# ─── Development image (hot reload) ────────────────────────────────────────
+# Used by `infra/docker-compose.dev.yml` via `npm run dev:stack`. It keeps the
+# FULL workspace and the toolchain, so source files are bind-mounted and edited
+# on the host while the containers recompile and reload.
 #
-# Unlike the production root Dockerfile, this image keeps the full workspace,
-# runs as the non-root `node` user and installs dependencies INSIDE the
-# container on first boot. That means:
-#   * host node_modules never enters the image (no cross-OS native binary clash),
-#   * containers are self-sufficient and reproducible,
-#   * nothing outside this compose project is affected.
+# Dependencies are NOT installed here: the `install` service runs `npm ci` into
+# a shared named volume at first boot, so the Linux-native binaries inside the
+# container never clash with the host's node_modules.
+#
+# The image starts as root so the backend entrypoint can chown/initialise the
+# PostgreSQL data volume; each API process is exec'd as the `node` user.
 
 FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-# Prisma needs openssl; curl is used by the web healthcheck.
+# Prisma needs openssl; curl/wget are used by healthchecks. PostgreSQL 16 lets
+# this container host the database, exactly like the production backend image,
+# so the dev and prod topologies match (Dockerfile only ships PG 15).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl ca-certificates curl \
+ && apt-get install -y --no-install-recommends openssl ca-certificates curl gnupg wget \
+ && install -d /usr/share/postgresql-common/pgdg \
+ && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+ && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-16 wget \
  && rm -rf /var/lib/apt/lists/*
 
-# The workspace root and every package manifest are bind-mounted at runtime.
-# We only pre-create the directories here so Docker volumes inherit the right
-# ownership (avoids root-owned node_modules on the project volume).
-RUN mkdir -p node_modules apps/web/.next apps/api apps/web packages/shared prisma infra /home/node/.npm \
+# Postgres server binaries are not on PATH by default.
+ENV PATH="/usr/lib/postgresql/16/bin:${PATH}"
+
+# Pre-create the directories that become volumes so their ownership is right
+# when the non-root user writes to them.
+RUN mkdir -p node_modules apps/api/dist apps/web/.next packages/shared/dist /home/node/.npm \
  && chown -R node:node /app /home/node
 
-USER node
-
 ENV NODE_ENV=development
-ENV CHOKIDAR_USEPOLLING=true
-ENV WATCHPACK_POLLING=true
 
 EXPOSE 3000 4000
 
-# Default command is provided per-service by compose.
+# Per-service commands are provided by compose.
 CMD ["node", "--version"]

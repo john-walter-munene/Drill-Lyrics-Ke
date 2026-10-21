@@ -16,93 +16,128 @@ shared environment — it removes "works on my machine" collisions entirely.
 
 ## 2. Docker — the default path
 
-Everything the app needs lives in `infra/`.
+Docker drives both setup and day-to-day development. Everything the app needs
+lives in `infra/`, and **the whole app always runs in two containers**: one
+backend that owns the API *and* PostgreSQL, plus one frontend.
 
-### 2a. Development stack (hot-reload, isolated)
+| | Development | Production-shaped |
+|---|---|---|
+| Compose file | `infra/docker-compose.dev.yml` | `infra/docker-compose.yml` |
+| Project | `drill-lyrics-key-dev` | `drill-lyrics-key` |
+| Backend | `drill-lyrics-key-dev-api` (`infra/Dockerfile.dev`) | `drill-lyrics-key-api-1` (`Dockerfile`) |
+| Frontend | `drill-lyrics-key-dev-web` (`infra/Dockerfile.dev`) | `drill-lyrics-key-web-1` (`apps/web/Dockerfile`) |
+| Reload | hot reload (bind mount) | none — rebuild to pick up changes |
+| Ports | `3000` web · `4000` api · `5432` db | same |
 
-The dev stack runs api + web inside containers with bind-mounted source files so edits reload instantly. The database and `node_modules` live in named Docker volumes, keeping your host OS clean.
+The database lives inside the backend container by design: two containers
+instead of three, and starting the stack alone produces a migrated, seeded,
+working app. The backend entrypoint (`infra/docker-entrypoint.sh`) initialises
+PostgreSQL, creates the role/database, applies Prisma migrations and seeds.
+
+### 2a. Daily development (hot reload)
 
 ```bash
-cp .env.example .env            # defaults are fine; no edits required for dev
-
-npm run dev:stack               # first run: builds image, installs deps, runs migrations, seeds
-#  web → http://localhost:3000
-#  api → http://localhost:4000/api/health/ready
+npm run dev:stack       # build + start; logs stream until Ctrl+C
+npm run dev:stack:bg    # start in the background
+npm run dev:stack:ps    # container status
+npm run dev:stack:logs  # tail api + web
+npm run dev:stack:down  # STOP — database data is kept
+npm run dev:stack:reset # stop and delete the database volume
 ```
 
+The repository is bind-mounted at `/app`; `apps/api` recompiles via
+`tsc --watch` and `apps/web` via `next dev`. `node_modules` lives in a named
+volume so host and container installs never clash.
+
+### 2b. Production-shaped stack
+
+Compiled artefacts, same shape as what ships:
+
 ```bash
-npm run dev:stack:down          # stop (data preserved in volumes)
-npm run dev:stack:reset         # stop + wipe volumes (fresh DB)
-npm run dev:stack:logs          # tail live api + web output
-npm run dev:stack:bg            # same as dev:stack but detached
+npm run stack:up        # docker compose -f infra/docker-compose.yml up -d --build
+npm run stack:ps        # both containers should report (healthy)
+npm run stack:logs      # tail api + web
+npm run stack:down      # STOP — database data is kept in the pgdata volume
+npm run stack:start     # start the existing containers again (no rebuild)
+npm run stack:reset     # stop and wipe the database volume
 ```
 
-**Isolation guarantees:**
-- Compose project name is pinned to `drillke-dev` — containers can't collide with other checkouts.
-- Host ports are overridable via `.env.local`: `WEB_PORT`, `API_PORT`, `DB_PORT`, `REDIS_PORT`.
-- Only source is bind-mounted; `node_modules` is a Docker named volume (Linux-native, fast).
-- App runs as the non-root `node` user inside the container.
+URLs (either stack): web → http://localhost:3000 · api readiness →
+http://localhost:4000/api/health/ready
 
-### 2b. Database only (fastest local inner loop)
+> Step-by-step verification, port changes and troubleshooting are in
+> [`runbook.md`](./runbook.md).
 
-Run Postgres + Redis in Docker, then the apps natively on your machine:
+### 2c. Configuration
+
+Compose defaults work with no setup. To change ports or secrets:
 
 ```bash
-npm run db:up                   # Postgres :5433 · Redis :6380
+cp infra/.env.example infra/.env
+```
+
+Compose reads `infra/.env` automatically for **both** stacks. Keys: `WEB_PORT`,
+`API_PORT`, `DB_PORT`, `POSTGRES_*`, `JWT_SECRET`, `CORS_ORIGINS`,
+`SEED_ON_START`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL`.
+
+`NEXT_PUBLIC_*` values are baked into the browser bundle at build time, so
+changing them requires rebuilding the web image (`npm run stack:up`). In the dev
+stack they are read when the container starts.
+
+### 2d. Local processes (optional)
+
+Run the apps natively against any Postgres 16 you have:
+
+```bash
+npm install
+cp .env.example .env
 npm run prisma:migrate
 npm run db:seed
 npm run dev                     # web  :3000
 npm run dev:api                 # api  :4000
 ```
 
-### 2c. Full production-like stack
+> The API dev runner compiles with `tsc --watch`, not `tsx`: Nest needs
+> `emitDecoratorMetadata` for dependency injection and `tsx` silently drops it.
+
+### 2e. Building images directly
 
 ```bash
-npm run stack:up                # web :3000 · api :4000 · postgres :5432 · redis :6379
-npm run stack:down
+npm run docker:build            # both images
+npm run docker:build:api        # production API image (Dockerfile)
+npm run docker:build:web        # production web image (apps/web/Dockerfile)
 ```
 
-### 2d. Building Docker images directly
+### 2f. Containerised checks
 
-You can build all or individual images with npm scripts:
-
-```bash
-npm run docker:build            # build all three images: dev, api, web
-npm run docker:build:dev        # build dev/tooling image (infra/Dockerfile.dev)
-npm run docker:build:api        # build production API image (Dockerfile)
-npm run docker:build:web        # build production web image (apps/web/Dockerfile)
-```
-
-### 2e. Containerized verification (CI in a container)
-
-Run lint, typecheck and test inside the Linux dev container without host dependencies:
+Unit tests and typechecking need no database:
 
 ```bash
-npm run docker:check            # runs typecheck + test + lint in the dev container
-npm run docker:test             # run unit tests in container
-npm run docker:typecheck        # run TypeScript check in container
-npm run docker:lint             # run lint in container
+npm test
+npm run typecheck
+npm run lint
 ```
 
 ### What is containerised, and why
 
 | Service | Image | Purpose |
 |---|---|---|
-| `postgres` | `postgres:16-alpine` | Database. Healthcheck gates dependants. |
-| `redis` | `redis:7-alpine` | Reserved for rate-limit/cache sharing across instances. |
-| `api` | `infra/Dockerfile.dev` (dev) / `Dockerfile` (prod) | NestJS; also runs the worker via command override. |
-| `web` | `apps/web/Dockerfile` | Next.js standalone server. |
+| `api` | `Dockerfile` (prod) / `infra/Dockerfile.dev` (dev) | NestJS API **+ PostgreSQL 16**, migrated and seeded on boot. Healthcheck gates `web`. |
+| `web` | `apps/web/Dockerfile` (prod) / `infra/Dockerfile.dev` (dev) | Next.js server. Waits for `api` to be healthy. |
+| `install` (dev, one-shot) | `infra/Dockerfile.dev` | Runs `npm ci` into a shared volume when manifests change. |
 
 Isolation choices that prevent collisions:
 
-- **Named volumes** (`drillke-pgdata`, `drillke-redisdata`) — data survives
-  rebuilds, `stack:down -v` resets deliberately.
-- **Fixed container names** (`drillke-postgres`, `drillke-api`, …) — a second
-  checkout of the repo fails loudly on a port/name clash instead of silently
-  talking to the wrong database.
-- **Explicit env in compose**, not a shared `.env` — the containers do not read
-  your local `.env`, so a dev secret can never leak into a shared environment.
-- **Containers use service DNS** (`postgres:5432`), never `localhost`.
+- **Pinned project names** (`drill-lyrics-key`, `drill-lyrics-key-dev`) —
+  containers, networks and volumes are namespaced and cannot collide with
+  another checkout or application.
+- **Named volumes** — `drill-lyrics-key_pgdata` (prod) and
+  `drill-lyrics-key-dev_node_modules` / `_next_cache` / `_pgdata` (dev). Data
+  survives rebuilds; `:*reset` scripts wipe it deliberately.
+- **Explicit env in compose**, not a shared `.env` — apart from the optional
+  `infra/.env`, so a dev secret never leaks into a shared environment.
+- **`localhost` inside the container** is correct here: the API and its
+  database share a network namespace.
 
 
 ## 3. Local (without Docker)
@@ -110,7 +145,8 @@ Isolation choices that prevent collisions:
 ```bash
 npm install
 cp .env.example .env          # edit secrets if needed
-npm run db:up                 # or point DATABASE_URL at any Postgres 16+
+# Point DATABASE_URL at any Postgres 16+ (local install, or the db published
+# from the backend container on localhost:5432)
 npm run prisma:generate
 npm run prisma:migrate
 npm run db:seed
@@ -165,9 +201,12 @@ See [`.env.example`](../.env.example). Rules:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `P1001: Can't reach database server` | Postgres not up / wrong host | `npm run db:up`; inside Docker use `postgres`, not `localhost` |
+| `P1001: Can't reach database server` | Postgres not up / wrong host | Start the stack (`npm run stack:up`); inside the container use `localhost`, from another container use the service name |
 | `P3009: failed migrations` | A migration failed halfway | Inspect with `prisma migrate status`, fix forward |
 | API boots then dies in prod | Weak/default `JWT_SECRET` | Set a ≥ 32-char secret |
 | Lyrics never highlight | YouTube iframe blocked / not playing | Check embed permissions; synced UI requires a playing player |
 | Web can't reach API in Docker | `NEXT_PUBLIC_API_URL` baked as `localhost` | Rebuild web with the browser-reachable URL |
-| Port already in use | Another checkout running | `npm run stack:down` in the other checkout |
+| Port already in use | Another checkout running | `npm run stack:down` in the other checkout, or change `*_PORT` in `infra/.env` |
+
+More local troubleshooting (including container health and log inspection):
+[`runbook.md`](./runbook.md).

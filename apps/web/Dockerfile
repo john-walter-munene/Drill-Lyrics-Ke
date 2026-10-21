@@ -8,8 +8,9 @@ COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
+# No --ignore-scripts: Next.js needs its postinstall to fetch the SWC binary.
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --ignore-scripts --no-audit --no-fund --fetch-retries=5
+    npm ci --no-audit --no-fund --fetch-retries=5
 
 COPY . .
 # NEXT_PUBLIC_* are inlined at build time — pass them as build args.

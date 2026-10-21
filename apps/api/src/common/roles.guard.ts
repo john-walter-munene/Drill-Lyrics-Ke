@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Module,
   SetMetadata,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -46,3 +47,23 @@ export class RolesGuard implements CanActivate {
     return ROLE_RANK[role] >= minimum;
   }
 }
+
+/**
+ * Wraps `RolesGuard` so its `Reflector` dependency is resolved explicitly.
+ *
+ * `RolesGuard` is registered as a root-scope `APP_GUARD`, but the root module
+ * does not import the `Reflector` provider, so Nest injected `undefined` and
+ * every request failed with "Cannot read properties of undefined (reading
+ * 'getAllAndOverride')". This module re-provides the guard with `Reflector`
+ * available and exports it for `@UseGuards` on individual controllers.
+ */
+@Module({
+  providers: [
+    {
+      provide: RolesGuard,
+      useFactory: () => new RolesGuard(new Reflector()),
+    },
+  ],
+  exports: [RolesGuard],
+})
+export class AuthZModule { }

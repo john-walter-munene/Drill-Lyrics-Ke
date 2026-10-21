@@ -1,202 +1,148 @@
-# ─── DrillKe — DEVELOPMENT stack (hot reload, isolated from your machine) ───
+# ─── DrillKe — DEVELOPMENT stack (hot reload) ──────────────────────────────
 #
-#   npm run dev:stack          # first run installs deps inside the container
-#   npm run dev:stack:down     # stop (keeps volumes/data)
-#   npm run dev:stack:reset    # stop and wipe node_modules + database
-#   npm run dev:logs
+#   npm run dev:stack          build + start, follow logs (Ctrl+C stops)
+#   npm run dev:stack:bg       build + start in the background
+#   npm run dev:stack:down     stop (database data is kept)
+#   npm run dev:stack:logs     tail api + web
+#   npm run dev:stack:reset    stop and wipe the database
 #
-# URLs:  web http://localhost:3000   ·   api http://localhost:4000/api/health/ready
+#   Two long-running containers (same shape as production):
 #
-# ISOLATION — nothing here touches other local projects:
-#   * The compose project name is pinned to `drillke-dev`, so containers,
-#     networks and volumes are namespaced `drillke-dev_*` and can never collide
-#     with another checkout or another app.
-#   * Host ports are overridable via .env.local (WEB_PORT / API_PORT / DB_PORT),
-#     so a port clash is solved by changing one variable, not by editing code.
-#   * Only source files are bind-mounted. `node_modules` live in a Docker named
-#     volume and Postgres data in another, so the app is installed and built by
-#     Linux inside the container, not by your host OS.
-#   * The app runs as the non-root `node` user.
+#     drill-lyrics-key-dev-api   NestJS API  +  PostgreSQL 16  → http://localhost:4000
+#     drill-lyrics-key-dev-web   Next.js dev server            → http://localhost:3000
 #
-# NOTE: the `api` and `web` services are behind the `dev` profile so the
-# one-shot `install`/`migrate` jobs can run first (`npm run dev:bootstrap`).
-# `npm run dev:stack` starts everything, including the profile.
+#   One one-shot job runs first and exits:
+#
+#     install   `npm ci` into a shared volume (only when manifests change)
+#
+#   Migrations and seeding happen inside the `api` container via the same
+#   entrypoint production uses, so the dev database always matches prod.
+#
+# HOW HOT RELOAD WORKS
+#   The repo is bind-mounted at /app, so the container sees your edits
+#   immediately. `node_modules` and `dist`/`.next` live in named volumes, so the
+#   Linux-built dependencies are never overwritten by the host's.
+#   * api → `npm run start:dev` = tsc --watch + node, restarts on every change
+#   * web → `next dev`, recompiles on every change
+#   Polling is enabled (CHOKIDAR_USEPOLLING / WATCHPACK_POLLING) because bind
+#   mounts on Windows and macOS do not emit native file-system events.
+#
+# ISOLATION
+#   Project name is pinned to `drill-lyrics-key-dev`, so containers, networks
+#   and volumes are namespaced and cannot collide with the production stack
+#   (`drill-lyrics-key`) or any other checkout.
 
-name: drillke-dev
+name: drill-lyrics-key-dev
+
+x-dev-base: &dev-base
+  build:
+    context: ..
+    dockerfile: infra/Dockerfile.dev
+  image: drillke-dev:latest
+  volumes:
+    - ..:/app
+    - node_modules:/app/node_modules
 
 services:
-  # ── Database ──────────────────────────────────────────────────────────────
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: drillke
-      POSTGRES_PASSWORD: drillke
-      POSTGRES_DB: drillke
-    ports:
-      - "${DB_PORT:-5433}:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U drillke -d drillke"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # ── Cache / rate-limit store (reserved) ───────────────────────────────────
-  cache:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "${REDIS_PORT:-6380}:6379"
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # ── One-shot: install deps inside the container, generate Prisma client ───
-  # Runs `npm ci` only when the install stamp is missing or manifests changed.
+  # ── One-shot: install dependencies into the shared volume ────────────────
   install:
-    build:
-      context: ..
-      dockerfile: infra/Dockerfile.dev
-    image: drillke-dev-base:latest
-    user: "root"
-    volumes:
-      - ..:/app
-      - node_modules:/app/node_modules
+    <<: *dev-base
+    working_dir: /app
     environment:
       NODE_ENV: development
-    working_dir: /app
     command:
       - sh
       - -c
       - |
         set -e
         mkdir -p node_modules
-        chown -R node:node /app/node_modules 2>/dev/null || true
-        stamp="node_modules/.drillke-install-stamp"
-        new_hash="$$(cat package-lock.json apps/api/package.json apps/web/package.json packages/shared/package.json | sha256sum | cut -d' ' -f1)"
+        stamp="node_modules/.drillke-stamp"
+        new_hash="$$(cat package-lock.json package.json apps/api/package.json apps/web/package.json packages/shared/package.json | sha256sum | cut -d' ' -f1)"
         old_hash="$$(cat "$$stamp" 2>/dev/null || true)"
         if [ "$$old_hash" = "$$new_hash" ] && [ -d node_modules/@drillke ]; then
-          echo "Dependencies up to date."
-          chown -R node:node /app/node_modules
+          echo "[install] dependencies up to date"
           exit 0
         fi
-        echo "Installing dependencies (npm ci)..."
+        echo "[install] npm ci ..."
         npm ci --no-audit --no-fund
         npx prisma generate --schema prisma/schema.prisma
         npm run build -w @drillke/shared
         echo "$$new_hash" > "$$stamp"
-        chown -R node:node /app/node_modules
-        echo "Dependencies ready."
+        echo "[install] ready"
 
-  # ── Migrations + seed ─────────────────────────────────────────────────────
-  migrate:
-    build:
-      context: ..
-      dockerfile: infra/Dockerfile.dev
-    user: "root"
-    volumes:
-      - ..:/app
-      - node_modules:/app/node_modules
-    environment:
-      DATABASE_URL: postgresql://drillke:drillke@db:5432/drillke?schema=public
-      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@drillke.local}
-    depends_on:
-      db:
-        condition: service_healthy
-      install:
-        condition: service_completed_successfully
-    working_dir: /app
-    command:
-      - sh
-      - -c
-      - |
-        set -e
-        if [ $$(find prisma/migrations -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l) -eq 0 ]; then
-          echo "No migration yet — generating the baseline schema migration."
-          npx prisma migrate dev --name init --schema prisma/schema.prisma --skip-seed
-        else
-          npx prisma migrate deploy --schema prisma/schema.prisma
-        fi
-        npm run db:seed
-
-  # ── API (hot reload via tsx watch) ────────────────────────────────────────
+  # ── Backend: API + PostgreSQL (hot reload) ───────────────────────────────
   api:
-    profiles: ["dev"]
-    build:
-      context: ..
-      dockerfile: infra/Dockerfile.dev
-    volumes:
-      - ..:/app
-      - node_modules:/app/node_modules
+    <<: *dev-base
+    # The dev image ships PostgreSQL too, so the topology matches production.
+    # Reuse the production entrypoint to init + start the database.
+    container_name: drill-lyrics-key-dev-api
+    # Run from the repo root: the entrypoint resolves prisma/schema.prisma and
+    # package scripts relative to /app.
+    working_dir: /app
+    entrypoint: ["/app/infra/docker-entrypoint.sh"]
+    command: ["npm", "run", "start:dev", "--prefix", "apps/api"]
     environment:
       NODE_ENV: development
       PORT: "4000"
-      DATABASE_URL: postgresql://drillke:drillke@db:5432/drillke?schema=public
-      REDIS_URL: redis://cache:6379
+      # Postgres server binaries live in a versioned dir that is not on PATH.
+      # (Compose merges env over the image's ENV, so re-declare it here.)
+      PATH: /usr/lib/postgresql/16/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      DATABASE_URL: postgresql://${POSTGRES_USER:-drillke}:${POSTGRES_PASSWORD:-drillke}@localhost:5432/${POSTGRES_DB:-drillke}?schema=public
+      POSTGRES_DB: ${POSTGRES_DB:-drillke}
+      POSTGRES_USER: ${POSTGRES_USER:-drillke}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-drillke}
+      # Migrations are applied once by the entrypoint on boot; the `migrate`
+      # job is kept as a convenience for re-seeding without a restart.
+      SEED_ON_START: ${SEED_ON_START:-true}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@drillke.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-change-me-now}
+      JWT_SECRET: ${JWT_SECRET:-local-dev-only-secret-change-before-deploying-0000}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-please-change-0123456789abcdef}
-      EMBED_WORKER: "false"
+      EMBED_WORKER: ${EMBED_WORKER:-false}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
     ports:
       - "${API_PORT:-4000}:4000"
-    depends_on:
-      db:
-        condition: service_healthy
-      install:
-        condition: service_completed_successfully
-      migrate:
-        condition: service_completed_successfully
-    working_dir: /app/apps/api
-    command: ["npx", "tsx", "watch", "--clear-screen=false", "src/main.ts"]
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:4000/api/health/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
-
-  # ── Web (Next.js dev server, HMR) ─────────────────────────────────────────
-  web:
-    profiles: ["dev"]
-    build:
-      context: ..
-      dockerfile: infra/Dockerfile.dev
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - ..:/app
       - node_modules:/app/node_modules
-      - next_cache:/app/apps/web/.next
-    environment:
-      NODE_ENV: development
-      NEXT_TELEMETRY_DISABLED: "1"
-      # Browser-reachable API URL (baked into the client bundle).
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
-      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
-    ports:
-      - "${WEB_PORT:-3000}:3000"
     depends_on:
       install:
         condition: service_completed_successfully
-      api:
-        condition: service_healthy
-    working_dir: /app/apps/web
-    command: ["npx", "next", "dev", "-p", "3000", "-H", "0.0.0.0"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3000/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 12
-      start_period: 40s
+      start_period: 60s
+
+  # ── Frontend: Next.js dev server (hot reload) ────────────────────────────
+  web:
+    <<: *dev-base
+    container_name: drill-lyrics-key-dev-web
+    working_dir: /app/apps/web
+    environment:
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    volumes:
+      - ..:/app
+      - node_modules:/app/node_modules
+      # Keep the compiled output out of the bind mount (Linux-native + fast).
+      - next_cache:/app/apps/web/.next
+    depends_on:
+      install:
+        condition: service_completed_successfully
+    command: ["npx", "next", "dev", "-p", "3000", "-H", "0.0.0.0"]
 
 volumes:
-  pgdata:
-  redisdata:
   node_modules:
   next_cache:

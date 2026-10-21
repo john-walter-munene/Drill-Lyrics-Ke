@@ -13,6 +13,12 @@
   "include": [
     "src/**/*.ts"
   ],
+  // Bind mounts (Docker on Windows/macOS) do not deliver file-system events, so
+  // `tsc --watch` must poll. Without this, edits never trigger a recompile.
+  "watchOptions": {
+    "watchFile": "fixedpollinginterval",
+    "watchDirectory": "fixedpollinginterval"
+  },
   "exclude": [
     "dist",
     "node_modules",
