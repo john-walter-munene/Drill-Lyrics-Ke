@@ -21,8 +21,11 @@
 #   docker compose -f infra/docker-compose.yml up -d --build
 # (from inside infra/ the plain `docker compose up` form works too).
 #
-# Ports are overridable: create infra/.env (see infra/.env.example) or export
-# WEB_PORT / API_PORT / DB_PORT before running compose.
+# Configuration: ONE env file, `../.env` at the repo root (copy it from
+# .env.example). It is passed to the api container via `env_file`, and the
+# ${VAR:-default} lines below read it because the root package.json sits next
+# to it. Setting a value there takes a re-created container to apply:
+#   docker compose -f infra/docker-compose.yml up -d
 
 name: drill-lyrics-key
 
@@ -34,6 +37,8 @@ services:
       dockerfile: Dockerfile
     image: drillke-api:latest
     restart: unless-stopped
+    env_file:
+      - ../.env
     environment:
       NODE_ENV: production
       PORT: "4000"
@@ -46,12 +51,25 @@ services:
       SEED_ON_START: ${SEED_ON_START:-true}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@drillke.local}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-change-me-now}
+      SEED_ADMIN_RESET_PASSWORD: ${SEED_ADMIN_RESET_PASSWORD:-false}
       JWT_SECRET: ${JWT_SECRET:-local-dev-only-secret-change-before-deploying-0000}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       MAX_BODY_SIZE: ${MAX_BODY_SIZE:-512kb}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       EMBED_WORKER: ${EMBED_WORKER:-false}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      # Mail (review outcomes, password reset, account deletion). `mock` is a
+      # valid production setting; it logs instead of sending. `smtp` with an
+      # incomplete configuration fails the boot-time env check on purpose.
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-mock}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-DrillKe <no-reply@drillke.com>}
+      # Used for the links inside those emails; must be the real public origin
+      # in production, not localhost.
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
     ports:
       - "${API_PORT:-4000}:4000"   # API
       - "${DB_PORT:-5432}:5432"    # PostgreSQL (psql, Prisma Studio, etc.)
@@ -75,10 +93,19 @@ services:
         NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
     image: drillke-web:latest
     restart: unless-stopped
+    env_file:
+      - ../.env
+    # The image is built with `output: 'standalone'`, which emits its own
+    # `server.js` AND strips the npm tree (no node_modules/.bin). So the start
+    # command is pinned here rather than using the image's default: `next start`
+    # refuses to run against standalone output, and the image has no root script
+    # to fall back to. Without this the container restarts in a loop.
+    command: ["node", "apps/web/server.js"]
     environment:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      API_INTERNAL_URL: http://api:4000
     ports:
       - "${WEB_PORT:-3000}:3000"
     depends_on:

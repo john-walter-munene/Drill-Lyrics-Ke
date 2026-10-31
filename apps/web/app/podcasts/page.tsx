@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { listPodcasts } from '../../lib/api';
+import { listPodcasts } from '../../api';
 import { pageMetadata } from '../../lib/seo';
 
 export const metadata: Metadata = pageMetadata({
@@ -16,11 +16,13 @@ export default async function PodcastsPage() {
 
   return (
     <main className="container">
-      <h1>Podcasts</h1>
-      <p className="muted" style={{ maxWidth: 620 }}>
-        Drill TV, audio edition: shows covering the scene, the artists and the bars. Episodes play
-        from the creator&apos;s own platform.
-      </p>
+      <header className="page-head">
+        <h1>Podcasts</h1>
+        <p className="muted">
+          Drill TV, audio edition: shows covering the scene, the artists and the bars. Episodes play
+          from the creator&apos;s own platform.
+        </p>
+      </header>
 
       {data.items.length === 0 ? (
         <p className="muted">Show listings are being added.</p>

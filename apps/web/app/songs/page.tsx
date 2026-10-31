@@ -1,11 +1,12 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { listSongs } from '../../lib/api';
+import { listSongs } from '../../api';
 import { pageMetadata } from '../../lib/seo';
+import SongList from './SongList';
 
 export const metadata: Metadata = pageMetadata({
   title: 'Songs',
-  description: 'Browse the DrillKe catalogue — every song with lyrics, context and a play button.',
+  description: 'Browse the Drill Lyrics catalogue — every song with lyrics, context and a play button.',
   path: '/songs',
 });
 
@@ -22,26 +23,18 @@ export default async function SongsPage({
 
   return (
     <main className="container">
-      <h1>Songs</h1>
-      <form method="get" style={{ display: 'flex', gap: '0.5rem', margin: '1rem 0 2rem' }}>
-        <label htmlFor="song-search" className="muted" style={{ alignSelf: 'center' }}>
+      <header className="page-head">
+        <h1>Songs</h1>
+        <p className="muted">
+          Every published song in the catalogue. Play one here, or open it to read the bars.
+        </p>
+      </header>
+
+      <form method="get" className="page-toolbar">
+        <label htmlFor="song-search" className="muted">
           Search
         </label>
-        <input
-          id="song-search"
-          name="q"
-          defaultValue={params.q ?? ''}
-          placeholder="Title or artist"
-          style={{
-            flex: 1,
-            maxWidth: 360,
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            color: 'var(--fg)',
-            borderRadius: 8,
-            padding: '0.5rem 0.65rem',
-          }}
-        />
+        <input id="song-search" name="q" defaultValue={params.q ?? ''} placeholder="Title or artist" />
         <button type="submit" className="btn btn--primary btn--sm">
           Go
         </button>
@@ -52,23 +45,7 @@ export default async function SongsPage({
           No songs here yet. The catalogue is being built — <Link href="/submit">contribute the first one</Link>.
         </p>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: '0.75rem' }}>
-          {data.items.map((song) => (
-            <li key={song.slug} className="panel">
-              <Link href={`/songs/${song.slug}`}>
-                <strong>{song.title}</strong>
-              </Link>
-              <p className="muted" style={{ margin: '0.25rem 0 0', fontSize: '0.9rem' }}>
-                {song.artists.map((a) => a.name).join(', ')}
-                {song.lyrics.versionId ? (
-                  <span className="badge" style={{ marginLeft: '0.5rem' }}>
-                    {song.lyrics.syncStatus === 'synchronized' ? 'Synced' : 'Lyrics'}
-                  </span>
-                ) : null}
-              </p>
-            </li>
-          ))}
-        </ul>
+        <SongList songs={data.items} />
       )}
     </main>
   );

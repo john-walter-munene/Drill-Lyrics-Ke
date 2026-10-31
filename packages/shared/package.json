@@ -18,11 +18,23 @@
       "require": "./dist/lyrics.js",
       "default": "./dist/lyrics.js"
     },
+    "./lyric-sync": {
+      "types": "./src/lyric-sync.ts",
+      "import": "./src/lyric-sync.ts",
+      "require": "./dist/lyric-sync.js",
+      "default": "./dist/lyric-sync.js"
+    },
     "./types": {
       "types": "./src/types.ts",
       "import": "./src/types.ts",
       "require": "./dist/types.js",
       "default": "./dist/types.js"
+    },
+    "./account-emails": {
+      "types": "./src/account-emails.ts",
+      "import": "./src/account-emails.ts",
+      "require": "./dist/account-emails.js",
+      "default": "./dist/account-emails.js"
     }
   },
   "scripts": {

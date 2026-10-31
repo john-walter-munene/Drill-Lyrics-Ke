@@ -12,40 +12,43 @@ import { Roles, RolesGuard } from '../../common/roles.guard';
 import { writeThrottle } from '../../common/throttling';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import { LyricsService } from './lyrics.service';
+import { CurrentUser } from '../../common/current-user.decorator';
+import type { SessionUser } from '../../common/session-auth.guard';
 
 /**
  * Lyrics contribution endpoints. Submissions are always re-validated
  * server-side with the shared parser — never trust the client.
  *
- * Authentication (session cookie → `req.user`) lands in Phase 1; the role
- * decorators below already describe the intended access rules.
+ * The initial contribution form is guest-friendly; writes remain throttled and
+ * all submitted lines are validated server-side. Account history comes later.
  */
 @Controller('lyrics')
 export class LyricsController {
   constructor(private readonly lyrics: LyricsService) { }
 
+  @Get('contributors/top')
+  topContributors() { return this.lyrics.topContributors(); }
+
   @Post('submissions')
-  @UseGuards(RolesGuard)
-  @Roles('member')
   @Throttle(writeThrottle())
-  create(@Body() dto: CreateSubmissionDto) {
-    return this.lyrics.createSubmission(dto);
+  create(@Body() dto: CreateSubmissionDto, @CurrentUser() user?: SessionUser) {
+    return this.lyrics.createSubmission(dto, user);
   }
 
   @Get('submissions/mine')
   @UseGuards(RolesGuard)
   @Roles('member')
   @SkipThrottle()
-  mine() {
-    return this.lyrics.mySubmissions();
+  mine(@CurrentUser() user?: SessionUser) {
+    return this.lyrics.mySubmissions(user?.id);
   }
 
   @Get('submissions/:id')
   @UseGuards(RolesGuard)
   @Roles('member')
   @SkipThrottle()
-  byId(@Param('id') id: string) {
-    return this.lyrics.submissionById(id);
+  byId(@Param('id') id: string, @CurrentUser() user?: SessionUser) {
+    return this.lyrics.submissionById(id, user?.id);
   }
 }
 

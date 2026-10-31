@@ -6,26 +6,58 @@
 //   npm run db:seed
 //
 import { PrismaClient } from '@prisma/client';
+import { randomBytes, scrypt as scryptCallback } from 'node:crypto';
 
 const prisma = new PrismaClient();
 
 /** Placeholder video — never a real copyrighted song. */
 const PLACEHOLDER_VIDEO_ID = 'dQw4w9WgXcQ';
 
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = randomBytes(16);
+    scryptCallback(password, salt, 64, { N: 16_384, r: 8, p: 1 }, (error, key) => {
+      if (error) return reject(error);
+      resolve(`scrypt$16384$8$1$${salt.toString('base64url')}$${key.toString('base64url')}`);
+    });
+  });
+}
+
 async function main() {
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@drillke.local';
-
-  const admin = await prisma.user.upsert({
-    where: { email: adminEmail },
-    update: { role: 'admin' },
-    create: {
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  const resetAdminPassword = process.env.SEED_ADMIN_RESET_PASSWORD === 'true';
+  if (!adminPassword || adminPassword.length < 10) {
+    // The entrypoint treats a failed seed as "skip and continue" (the app still
+    // runs without seed content), so this is the ONLY place a missing admin
+    // password can be reported. Without the hint below the symptom is an admin
+    // account that quietly does not exist, i.e. "admin login does not work".
+    throw new Error(
+      'SEED_ADMIN_PASSWORD must be configured with at least 10 characters — ' +
+      'set it in infra/.env (or the host .env.local) and restart the API. ' +
+      'Until then NO admin account is created.',
+    );
+  }
+  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
+  // Promote a matching non-staff account: an admin who signed up through the
+  // normal form (and so got `member`) otherwise has no way to reach /admin until
+  // somebody else promotes them — and on a fresh install there is nobody.
+  const adminRole = existingAdmin && existingAdmin.role !== 'admin' ? { role: 'admin' } : {};
+  const admin = existingAdmin
+    ? (existingAdmin.passwordHash && !resetAdminPassword && !adminRole.role ? existingAdmin : await prisma.user.update({
+      where: { id: existingAdmin.id },
+      data: { ...adminRole, ...(resetAdminPassword || !existingAdmin.passwordHash ? { passwordHash: await hashPassword(adminPassword) } : {}) },
+    }))
+    : await prisma.user.create({ data: {
       email: adminEmail,
       displayName: 'DrillKe Admin',
       role: 'admin',
-      // Password hashing is wired up with the auth module (Phase 1).
-      passwordHash: null,
-    },
-  });
+      passwordHash: await hashPassword(adminPassword),
+      // Seeded staff are confirmed by definition: the operator running the seed
+      // already controls the address, and an admin who cannot confirm because
+      // MAIL_PROVIDER=mock would be permanently unverified.
+      emailVerifiedAt: new Date(),
+    } });
 
   const artist = await prisma.artist.upsert({
     where: { slug: 'example-artist' },
@@ -43,53 +75,62 @@ async function main() {
     },
   });
 
-  const song = await prisma.song.upsert({
-    where: { slug: 'example-artist-example-track' },
-    update: {},
+  // First user-supplied player test video. The title is copied from its public
+  // YouTube player; leave the artist relationship empty until it's confirmed.
+  const playerTestSong = await prisma.song.upsert({
+    where: { slug: 'player-test-npvw1ntged4' },
+    update: { title: 'NastyGoat- Strap (music video)' },
     create: {
-      slug: 'example-artist-example-track',
-      title: 'Example Track',
-      youtubeVideoId: PLACEHOLDER_VIDEO_ID,
-      language: 'sheng',
+      slug: 'player-test-npvw1ntged4',
+      title: 'NastyGoat- Strap (music video)',
+      youtubeVideoId: 'nPVW1ntGeD4',
+      language: 'mixed',
       status: 'published',
-      releaseDate: new Date('2026-03-14'),
-      artists: { create: [{ artistId: artist.id, isPrimary: true, position: 0 }] },
     },
   });
 
-  // A synchronized version with placeholder lines — shows the player's shape
-  // without shipping anyone's real lyrics.
-  const existingVersion = await prisma.lyricVersion.findFirst({
-    where: { songId: song.id },
-  });
-  if (!existingVersion) {
-    await prisma.lyricVersion.create({
-      data: {
-        songId: song.id,
-        version: 1,
-        syncStatus: 'synchronized',
-        source: 'seed',
-        published: true,
-        publishedAt: new Date(),
-        lines: {
-          create: [
-            { index: 0, startMs: 12_500, text: 'First placeholder line.' },
-            { index: 1, startMs: 15_200, text: 'Second placeholder line.' },
-            { index: 2, startMs: 18_100, text: 'Third placeholder line.' },
-          ],
-        },
-        annotations: {
-          create: [
-            {
-              phrase: 'placeholder',
-              explanation: 'Seed data — replace with a real Sheng/slang annotation.',
-              lineIndex: 0,
-            },
-          ],
-        },
+  // User-supplied queue tracks for testing Listen/Watch and previous/next.
+  // Titles are from YouTube's public oEmbed metadata; artist profiles are left
+  // unassigned until the catalogue relationship is confirmed.
+  const playbackTestVideos = [
+    {
+      slug: 'masicka-update-official-video',
+      title: 'Masicka - Update (Official Video)',
+      youtubeVideoId: 'bNjQUtXiX8o',
+    },
+    {
+      slug: 'wakadinali-top-scorer-official-audio',
+      title: 'Wakadinali-"Top Scorer"(Official Audio)',
+      youtubeVideoId: 'ZRK-hDiks50',
+    },
+    {
+      slug: 'wakadinali-blow-deluxe-official-music-video',
+      title: 'Wakadinali - "Blow" Deluxe (Official Music Video)',
+      youtubeVideoId: 'wEZZQIlXXrY',
+    },
+    {
+      slug: 'natty-no-lotion-visualiser',
+      title: 'NATTY - NO LOTION (VISUALISER)',
+      youtubeVideoId: 'yXQYjHE8z1U',
+    },
+  ];
+
+  const playbackTestSongs = await Promise.all(playbackTestVideos.map((video) =>
+    prisma.song.upsert({
+      where: { slug: video.slug },
+      update: {
+        title: video.title,
+        youtubeVideoId: video.youtubeVideoId,
+        language: 'mixed',
+        status: 'published',
       },
-    });
-  }
+      create: {
+        ...video,
+        language: 'mixed',
+        status: 'published',
+      },
+    }),
+  ));
 
   const dj = await prisma.dj.upsert({
     where: { slug: 'example-dj' },
@@ -100,7 +141,6 @@ async function main() {
       bio: 'Placeholder DJ used by the local seed.',
       city: 'Nairobi',
       links: { create: [{ label: 'Mixcloud', url: 'https://www.mixcloud.com/example' }] },
-      tracks: { create: [{ songId: song.id, rank: 1 }] },
     },
   });
 
@@ -120,7 +160,6 @@ async function main() {
             publishedAt: new Date('2026-03-20'),
             externalUrl: `https://www.youtube.com/watch?v=${PLACEHOLDER_VIDEO_ID}`,
             platform: 'youtube',
-            songs: { create: [{ songId: song.id }] },
             artists: { create: [{ artistId: artist.id }] },
           },
         ],
@@ -148,7 +187,8 @@ async function main() {
   console.log('Seeded:', {
     admin: admin.email,
     artist: artist.slug,
-    song: song.slug,
+    playerTestSong: playerTestSong.slug,
+    playbackTestSongs: playbackTestSongs.map((song) => song.slug),
     dj: dj.slug,
     podcast: podcast.slug,
     event: event.slug,

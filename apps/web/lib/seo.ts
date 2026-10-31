@@ -1,4 +1,4 @@
-import { SITE_URL } from './api';
+import { SITE_URL } from '../api';
 
 /**
  * Shared SEO helpers. Every public page builds its metadata here so canonical
@@ -18,7 +18,7 @@ export function pageMetadata(opts: {
     alternates: { canonical: url },
     openGraph: {
       type: 'website' as const,
-      siteName: 'DrillKe',
+      siteName: 'Drill Lyrics',
       title: opts.title,
       description: opts.description,
       url,

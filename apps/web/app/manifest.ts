@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'DrillKe — Kenyan drill lyrics',
-    short_name: 'DrillKe',
+    name: 'Drill Lyrics — Kenyan drill',
+    short_name: 'Drill Lyrics',
     description: 'Read the bars while the music plays.',
     start_url: '/',
     display: 'standalone',

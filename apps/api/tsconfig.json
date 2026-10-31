@@ -8,7 +8,16 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "noUnusedParameters": false,
+    // Shared modules in `packages/shared` import each other with `.ts`
+    // extensions so they run unbuilt under `node --experimental-strip-types`.
+    // Without these two flags, any API file that imports the shared package
+    // pulls those specifiers into the API's compile graph and `tsc` rejects
+    // them (TS5097). `rewriteRelativeImportExtensions` (TypeScript 5.7) emits
+    // the correct `./x.js` specifier in `dist`, so the CommonJS build is
+    // unaffected.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
   },
   "include": [
     "src/**/*.ts"

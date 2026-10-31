@@ -1,4 +1,8 @@
 import { Logger } from '@nestjs/common';
+// Extension included: `config.test.ts` runs this file under Node's ESM loader,
+// which does not resolve extensionless relative paths. `tsconfig.json` allows
+// the form and rewrites it to `.js` in `dist`.
+import { resolveSmtpSettings } from '../modules/mail/smtp-config.ts';
 
 /**
  * Minimum length for a secret to be considered "strong". A rotated secret
@@ -21,6 +25,7 @@ const INSECURE_DEFAULTS = new Set([
   'secret',
   'password',
   'changeme',
+  'local-dev-only-secret-change-before-deploying-0000',
 ]);
 
 /**
@@ -46,6 +51,15 @@ export function collectConfigProblems(
         `${key} is too weak: use at least ${MIN_SECRET_LENGTH} characters (e.g. \`openssl rand -hex 32\`)`,
       );
     }
+  }
+
+  // A mailer is only checked when it is asked for. `mock` is a valid production
+  // choice (notifications are logged), so it raises nothing.
+  if (env.MAIL_PROVIDER === 'smtp') {
+    const { problems: smtpProblems } = resolveSmtpSettings(env);
+    problems.push(...smtpProblems);
+  } else if (env.MAIL_PROVIDER && env.MAIL_PROVIDER !== 'mock') {
+    problems.push(`MAIL_PROVIDER must be "mock" or "smtp" (got "${env.MAIL_PROVIDER}")`);
   }
 
   return problems;

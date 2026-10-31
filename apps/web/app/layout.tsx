@@ -3,12 +3,13 @@ import Link from 'next/link';
 import SiteHeader from './components/SiteHeader';
 import SiteFooter from './components/SiteFooter';
 import PlayerProvider from './components/player/PlayerProvider';
+import PersistentPlayer from './components/player/PersistentPlayer';
 
 export const metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'),
   title: {
-    default: 'DrillKe — Kenyan drill lyrics',
-    template: '%s · DrillKe',
+    default: 'Drill Lyrics — Kenyan drill, line by line',
+    template: '%s · Drill Lyrics',
   },
   description:
     'The home of Kenyan drill. Read the bars while the music plays — synchronized lyrics, Sheng annotations, artists, DJs, podcasts and events.',
@@ -18,14 +19,14 @@ export const metadata = {
   },
   openGraph: {
     type: 'website',
-    siteName: 'DrillKe',
-    title: 'DrillKe — Kenyan drill lyrics',
+    siteName: 'Drill Lyrics',
+    title: 'Drill Lyrics — Kenyan drill, line by line',
     description: 'Read the bars while the music plays.',
-    images: [{ url: '/og-default.svg', width: 1200, height: 630, alt: 'DrillKe' }],
+    images: [{ url: '/og-default.svg', width: 1200, height: 630, alt: 'Drill Lyrics' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'DrillKe — Kenyan drill lyrics',
+    title: 'Drill Lyrics — Kenyan drill, line by line',
     description: 'Read the bars while the music plays.',
     images: ['/og-default.svg'],
   },
@@ -51,6 +52,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SiteHeader />
         {/* The player lives above the routes so navigation never unmounts it. */}
         <PlayerProvider>
+          <PersistentPlayer />
           <div id="main-content" tabIndex={-1}>
             {children}
           </div>

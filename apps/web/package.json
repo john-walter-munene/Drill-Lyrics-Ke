@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
-    "lint": "echo '@drillke/web: lint passed (ESLint rules configured in Phase 1)'"
+    "lint": "eslint app api lib --max-warnings 0"
   },
   "dependencies": {
     "@drillke/shared": "*",

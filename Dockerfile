@@ -41,29 +41,41 @@ RUN npm run prisma:generate \
 # Keeping it costs ~40 MB and makes migrations runnable from this image.
 RUN npm prune --omit=dev && npm install --no-save --no-audit --no-fund prisma@^6.2.0
 
+# Regenerate AFTER the prune: `npm prune` re-resolves the workspace graph and
+# can leave a client generated against a different @prisma/client version. The
+# entrypoint regenerates on boot too (the schema can change without an image
+# rebuild), but baking it in keeps the image self-contained and fails the BUILD
+# on a broken schema instead of at container start.
+RUN npm run prisma:generate
+
 # ---- Runtime ----------------------------------------------------------------
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # Debian ships the PostgreSQL server binaries in a versioned directory that is
 # NOT on PATH (only the client wrappers are). The entrypoint needs initdb,
-# pg_ctl and pg_isready.
-ENV PATH="/usr/lib/postgresql/16/bin:${PATH}"
+# pg_ctl and pg_isready. Set below once we know the major version.
 # openssl: Prisma engines. wget: container healthcheck.
-# PostgreSQL 16: the backend container OWNS its database (single-container
-# backend + db, per the two-container layout), started by docker-entrypoint.sh.
-# Debian bookworm only ships PostgreSQL 15, so add the official PGDG repo.
+#
+# PostgreSQL: the backend container OWNS its database (single-container backend
+# + db, per the two-container layout), started by docker-entrypoint.sh.
+#
+# This deliberately uses Debian's own `postgresql` package (~15) instead of the
+# third-party PGDG repo: apt.postgresql.org is frequently slow or unreachable
+# (TLS handshakes time out), which made `docker build` fail for reasons that
+# have nothing to do with this app. The entrypoint initialises whatever major
+# version is installed and detects its bin dir, so 15 and 16 both work.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl ca-certificates wget curl gnupg \
- && install -d /usr/share/postgresql-common/pgdg \
- && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-      -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
- && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
-      > /etc/apt/sources.list.d/pgdg.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends postgresql-16 \
+ && apt-get install -y --no-install-recommends openssl ca-certificates wget curl postgresql \
  && rm -rf /var/lib/apt/lists/* \
- && npm cache clean --force
+ && npm cache clean --force \
+ && pg_major="$(ls /usr/lib/postgresql | sort -n | tail -1)" \
+ && echo "/usr/lib/postgresql/${pg_major}/bin" > /etc/drillke-pg-bin \
+ && echo "PostgreSQL major version: ${pg_major}"
+
+# pg_isready is part of postgresql-client, which the server package pulls in.
+# Fail the build now rather than at container start if it is absent.
+RUN PATH="$(cat /etc/drillke-pg-bin):$PATH" && pg_isready --version && initdb --version
 
 # Bring over installed deps (incl. generated Prisma client + workspace symlink)
 # and the compiled output. Source TS is intentionally left out of the image.

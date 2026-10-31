@@ -99,9 +99,12 @@ function watchCompiled() {
   }, Number(process.env.DEV_POLL_MS ?? 1000)).unref();
 }
 
+// tsc in watch mode emits "Found N errors. Watching for file changes." to
+// stdout when a compile round ends. Pipe it through so we can see that line and
+// decide whether the output is trustworthy; the text is forwarded unchanged.
 const tsc = spawn(bin('tsc'), ['-p', 'tsconfig.json', '--watch', '--preserveWatchOutput'], {
   cwd: root,
-  stdio: 'inherit',
+  stdio: ['ignore', 'pipe', 'pipe'],
   shell: process.platform === 'win32',
 });
 
@@ -110,14 +113,31 @@ tsc.on('exit', (code) => {
   process.exit(code ?? 1);
 });
 
-// Start the app once the first successful compile has written the entrypoint.
-const waitForEntry = setInterval(() => {
-  if (fs.existsSync(entry)) {
-    clearInterval(waitForEntry);
-    watchCompiled();
-    start();
+// Start the app only after the FIRST compile succeeded.
+//
+// The entrypoint existing is not proof of a good build: `dist/` lives in a
+// named volume and survives restarts, so a stale main.js from an earlier run
+// would be executed against source that no longer compiles — the API then boots
+// fine but serves old code, hiding real type errors.
+let started = false;
+
+function onTscOutput(chunk) {
+  const text = String(chunk);
+  process.stdout.write(text);
+  if (started) return;
+  if (/Found [1-9]\d* error/.test(text)) {
+    console.error('[dev] compile failed — API not started; fix the errors above');
+    return;
   }
-}, 250);
+  if (!/Watching for file changes|Found 0 error/.test(text)) return;
+  if (/Found [1-9]\d* error/.test(text)) return; // same chunk ends with the watch line
+  started = true;
+  watchCompiled();
+  start();
+}
+
+tsc.stdout.on('data', onTscOutput);
+tsc.stderr.on('data', onTscOutput);
 
 const shutdown = () => {
   if (child) child.kill('SIGTERM');

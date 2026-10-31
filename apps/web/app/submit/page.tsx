@@ -1,78 +1,43 @@
-import Link from 'next/link';
 import type { Metadata } from 'next';
+import { getTopContributors, listSongs } from '../../api';
 import { pageMetadata } from '../../lib/seo';
+import LyricsSubmissionForm from './LyricsSubmissionForm';
+
+// Catalogue data must be fetched by the running web server from the API
+// container, not captured as an empty build-time page.
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = pageMetadata({
   title: 'Submit lyrics',
-  description: 'Help build the DrillKe catalogue — submit lyrics, timestamps or corrections for a Kenyan drill song.',
+  description: 'Submit lyrics and timestamps for a song in the Drill Lyrics catalogue.',
   path: '/submit',
 });
 
-export default function SubmitPage() {
-  return (
-    <main className="container" style={{ maxWidth: 760 }}>
-      <h1>Submit lyrics</h1>
-      <p className="muted">
-        Every song on DrillKe starts with someone who knows the bars. Submit lyrics, add timestamps,
-        or correct a line. Nothing publishes without review.
-      </p>
+export default async function SubmitPage() {
+  const [catalogue, contributors] = await Promise.all([listSongs({ page: 1 }), getTopContributors()]);
 
-      <section className="panel" style={{ marginTop: '1.5rem' }}>
-        <h2 style={{ fontSize: '1rem', marginTop: 0 }}>Before you start</h2>
+  return (
+    <main className="container container--reading">
+      <header className="page-head">
+        <h1>Submit lyrics</h1>
+        <p className="muted">
+          Choose a song from the catalogue and paste its lyrics. You can add timestamps now or submit
+          plain lines and sync them later. Submissions stay pending until reviewed.
+        </p>
+      </header>
+
+      <section className="panel">
+        <h2 style={{ fontSize: '1rem', marginTop: 0 }}>Before you submit</h2>
         <ul className="muted" style={{ margin: 0, paddingLeft: '1.1rem', lineHeight: 1.9 }}>
           <li>Only submit lyrics you have the right to share.</li>
-          <li>Be accurate — listen twice, prefer the artist&apos;s own published lines.</li>
-          <li>Timestamps follow the format in the lyrics guide: <code>[00:12.500]</code>.</li>
-          <li>Keep annotations factual and respectful.</li>
+          <li>Use one lyric line per row.</li>
+          <li>For synced lines, put a timestamp first, like <code>[00:12.500] First line</code>.</li>
+          <li>Every submission is saved for review; it will not appear as published lyrics immediately.</li>
         </ul>
       </section>
 
-      <form style={{ marginTop: '1.5rem', display: 'grid', gap: '0.75rem' }} aria-describedby="submit-note">
-        <label htmlFor="song" style={{ fontWeight: 600 }}>
-          Song
-        </label>
-        <input
-          id="song"
-          name="song"
-          placeholder="Artist — Title (or a DrillKe song link)"
-          style={{
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            color: 'var(--fg)',
-            borderRadius: 8,
-            padding: '0.6rem 0.7rem',
-          }}
-        />
-
-        <label htmlFor="markdown" style={{ fontWeight: 600 }}>
-          Lyrics (Markdown)
-        </label>
-        <textarea
-          id="markdown"
-          name="markdown"
-          rows={14}
-          placeholder={'---\ntitle: "…"\nartist: "…"\nyoutubeVideoId: "…"\n---\n\n[00:12.500] First line…'}
-          style={{
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            color: 'var(--fg)',
-            borderRadius: 8,
-            padding: '0.7rem',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            fontSize: '0.85rem',
-            resize: 'vertical',
-          }}
-        />
-
-        <button type="submit" className="btn btn--primary" disabled>
-          Submit for review
-        </button>
-        <p id="submit-note" className="muted" style={{ fontSize: '0.85rem', margin: 0 }}>
-          Submission is disabled in this scaffold. It connects to{' '}
-          <code>POST /api/lyrics/submissions</code> in Phase 1 — see{' '}
-          <Link href="/about">how review works</Link>.
-        </p>
-      </form>
+      <LyricsSubmissionForm songs={catalogue.items} />
+      {contributors.items.length > 0 && <section className="panel" style={{ marginTop: '2rem' }}><h2>Community contributors</h2><p className="muted">Published lyric contributions credited by their authors. Recognition only; there is no payment promise.</p><ol>{contributors.items.map((person) => <li key={person.name}>{person.name} — {person.publishedContributions} published {person.publishedContributions === 1 ? 'contribution' : 'contributions'}</li>)}</ol></section>}
     </main>
   );
 }

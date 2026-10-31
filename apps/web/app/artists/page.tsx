@@ -1,11 +1,11 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { listArtists } from '../../lib/api';
+import { listArtists } from '../../api';
 import { pageMetadata } from '../../lib/seo';
 
 export const metadata: Metadata = pageMetadata({
   title: 'Artists',
-  description: 'Kenyan drill artists on DrillKe — profiles, links and catalogue.',
+  description: 'Kenyan drill artists on Drill Lyrics — profiles, links and catalogue.',
   path: '/artists',
 });
 
@@ -16,7 +16,13 @@ export default async function ArtistsPage() {
 
   return (
     <main className="container">
-      <h1>Artists</h1>
+      <header className="page-head">
+        <h1>Artists</h1>
+        <p className="muted">
+          Kenyan drill artists in the catalogue, with their releases and their own channels.
+        </p>
+      </header>
+
       {data.items.length === 0 ? (
         <p className="muted">
           Artist profiles are being added. Know someone who belongs here?{' '}

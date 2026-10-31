@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { listEvents } from '../../lib/api';
+import { listEvents } from '../../api';
 import { pageMetadata } from '../../lib/seo';
 import { formatEventTime } from '../../lib/format';
 
@@ -17,10 +17,12 @@ export default async function EventsPage() {
 
   return (
     <main className="container">
-      <h1>Events</h1>
-      <p className="muted" style={{ maxWidth: 620 }}>
-        Where to catch drill live. Tickets are sold by the organisers — we only point you to them.
-      </p>
+      <header className="page-head">
+        <h1>Events</h1>
+        <p className="muted">
+          Where to catch drill live. Tickets are sold by the organisers — we only point you to them.
+        </p>
+      </header>
 
       {data.items.length === 0 ? (
         <p className="muted">No events listed yet.</p>

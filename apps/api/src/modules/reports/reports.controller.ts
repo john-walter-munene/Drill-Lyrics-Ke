@@ -1,6 +1,7 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Roles, RolesGuard } from '../../common/roles.guard';
+import { CurrentUser } from '../../common/current-user.decorator';
 import { writeThrottle } from '../../common/throttling';
 import { CreateReportDto } from './dto/create-report.dto';
 import { ReportsService } from './reports.service';
@@ -17,7 +18,7 @@ export class ReportsController {
   @UseGuards(RolesGuard)
   @Roles('member')
   @Throttle(writeThrottle())
-  create(@Body() dto: CreateReportDto) {
-    return this.reports.create(dto);
+  create(@Body() dto: CreateReportDto, @CurrentUser() user: { id: string }) {
+    return this.reports.create(dto, user?.id ?? null);
   }
 }

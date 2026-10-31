@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { getDj } from '../../../lib/api';
+import { getDj } from '../../../api';
 import { pageMetadata } from '../../../lib/seo';
 
 export const revalidate = 300;
@@ -16,7 +16,7 @@ export async function generateMetadata({
   if (!dj) return { title: 'DJ not found' };
   return pageMetadata({
     title: dj.name,
-    description: dj.bio ?? `DJ ${dj.name} — tracks, mixes and appearances on DrillKe.`,
+    description: dj.bio ?? `DJ ${dj.name} — tracks, mixes and appearances on Drill Lyrics.`,
     path: `/djs/${dj.slug}`,
   });
 }

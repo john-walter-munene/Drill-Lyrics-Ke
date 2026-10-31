@@ -38,7 +38,7 @@ Every v1 decision serves one experience: open a song, play it, and follow the ba
 | DJs, podcasts, events directories | Word-level highlighting, Swahili UI |
 | About & Support pages | PWA, public API |
 
-V1 also includes `/about` and `/support` — who we are, how the model works, and how to fund the work.
+V1 also includes `/about`, `/support` and `/developers` — the story, ways to help, and a practical guide for contributing to the open-source project.
 
 ---
 
@@ -53,7 +53,6 @@ V1 also includes `/about` and `/support` — who we are, how the model works, an
 | `docs/api.md` | API contract — routes, payloads, errors |
 | `docs/deploy.md` | Docker topology, environments, production deployment |
 | `docs/runbook.md` | **Day-to-day**: start/stop both stacks, verify, configure, troubleshoot |
-| `docs/runbook.md` | Start / stop / verify the two containers, ports, troubleshooting |
 | `docs/context.md` | Original long-form brief (context only, not a spec) |
 
 ```text
@@ -61,8 +60,9 @@ apps/api         NestJS modular monolith (modules/, common/, workers/)
 apps/web         Next.js App Router (app/, components/player, lib/)
 packages/shared  Types + pure lyrics logic shared by both apps
 prisma/          Schema, migrations, seed
+.env.example     THE environment file (copy to .env at the repo root)
 infra/           docker-compose.yml (prod) + docker-compose.dev.yml (hot reload)
-                 + backend entrypoint + .env.example
+                 + backend entrypoint
 apps/api/scripts dev-watch.js  (tsc --watch + restart, emits decorator metadata)
 docs/            The documents above
 ```
@@ -91,8 +91,17 @@ between engineers.
 
 ```bash
 git clone <repo> && cd Drill-Lyrics-Ke
+cp .env.example .env     # once; add YOUTUBE_API_KEY if you will import artists
 npm run dev:stack        # build + start; logs stream in this terminal
 ```
+
+`.env` is the **only** environment file. Both stacks and host `npm run dev`
+read it; there is no `infra/.env` and no `.env.local`. After editing it, run
+`npm run dev:stack:restart` — environment is read when a container is created.
+
+Sign in at http://localhost:3000/sign-in with `SEED_ADMIN_EMAIL` /
+`SEED_ADMIN_PASSWORD` from `.env` (default `admin@drillke.local` /
+`change-me-now`), then open http://localhost:3000/admin.
 
 | Container | What runs | URL |
 |---|---|---|
@@ -104,11 +113,12 @@ reloads — no restart, no rebuild. Migrations and seed data are applied
 automatically on first boot.
 
 ```bash
-npm run dev:stack:bg     # start in the background instead
-npm run dev:stack:logs   # tail api + web
-npm run dev:stack:ps     # container status
-npm run dev:stack:down   # STOP (database data is kept)
-npm run dev:stack:reset  # stop and wipe the database
+npm run dev:stack:bg       # start in the background instead
+npm run dev:stack:logs     # tail api + web
+npm run dev:stack:ps       # container status
+npm run dev:stack:restart  # re-create api + web (after editing .env)
+npm run dev:stack:down     # STOP (database data is kept)
+npm run dev:stack:reset    # stop and wipe the database
 ```
 
 ### Production-shaped run (compiled build)
@@ -133,7 +143,7 @@ docker compose -f infra/docker-compose.yml down             # stop
 
 Both stacks appear in Docker Desktop as the projects **`drill-lyrics-key-dev`**
 and **`drill-lyrics-key`**. They are namespaced separately and can run at the
-same time only if you change ports in `infra/.env`.
+same time only if you change ports in `.env`.
 
 ### Optional: local processes (no Docker)
 
@@ -160,9 +170,15 @@ Full runbook — ports, configuration, verification, troubleshooting:
 | `npm run dev` / `npm run dev:api` | Start web / API in watch mode |
 | `npm run build` | Build shared → api → web |
 | `npm run typecheck` | TypeScript across workspaces |
-| `npm test` | Unit tests (pure logic, no DB) |
+| `npm run lint` | ESLint across the workspace, warnings fail the run |
+| `npm test` | Unit tests (pure logic, no DB) — shared, API, web |
+| `npm run smoke:sync-estimate` | Live-stack check of the admin server-side timing estimator |
+| `npm run smoke:account-flows` | Live-stack check of password reset and account deletion |
+| `npm run smoke:confirmation-export` | Live-stack check of email confirmation and data export |
 | `npm run dev:stack` | **Daily dev**: build + start containers with hot reload |
 | `npm run dev:stack:bg` | Same, in the background |
+| `npm run dev:stack:restart` | Re-create api + web — run after editing `.env` |
+| `npm run dev:stack:install` | Re-run `npm ci` in the shared volume by hand |
 | `npm run dev:stack:down` | Stop the dev stack (keeps database data) |
 | `npm run dev:stack:reset` | Stop and wipe the dev database |
 | `npm run dev:stack:logs` | Tail dev api + web logs |
@@ -185,13 +201,48 @@ Full runbook — ports, configuration, verification, troubleshooting:
 
 ## Status
 
-**Phase 0 — scaffold.** Structure, contracts, Docker and docs are in place; feature code lands in the next sessions. See [`docs/roadmap.md`](docs/roadmap.md).
+**Current baseline.** The persistent YouTube player, moderator lyric timing
+editor, catalogue search (including published lyric phrases),
+synchronized/unsynchronized lyric display, annotation reading, annotation
+authoring in the review flow, anonymous or account-linked lyric submissions,
+Passport Local/JWT accounts, staff review dashboard and official YouTube channel
+intake are implemented.
+
+The timing estimator runs in the browser and offloads to the API for weak
+devices. Accounts support password reset (single-use, hashed link), soft email
+confirmation, JSON data export and self-service deletion, and all mail goes out
+over real SMTP or the logging mock provider.
+
+**Artist intake (October 2026).** One YouTube link — a `@handle`, a `/channel/`
+URL or any video URL — imports the artist's **whole** channel: the importer walks
+the uploads playlist page by page, batches YouTube's metadata calls (50 videos
+per quota unit), saves its position after every page so an interrupted import
+resumes rather than restarts, and refuses a second concurrent sync on the same
+channel. Clearly-music uploads land as draft songs; everything else lands as a
+review candidate, never in the public catalogue. See
+[`docs/runbook.md` § YouTube import](docs/runbook.md#youtube-import).
+
+**Interface (October 2026).** A single responsive header: full navigation on
+desktop, a menu panel on tablet and phone (keyboard-dismissable, scroll-locked,
+reported to assistive technology), with the same page shell — heading block,
+readable width, toolbar — on every route.
+
+Still outstanding for V1: the Phase 1 real-device and catalogue-size exit checks,
+and the lyrics-submission / playback-synchronization work that follows them
+(see [`docs/roadmap.md`](docs/roadmap.md) § Phase 1). Channel uploads remain
+draft candidates until staff review.
+
+Before any production deployment: set a strong `JWT_SECRET`, set
+`NEXT_PUBLIC_SITE_URL` to the real public origin (reset links are built from it),
+configure `YOUTUBE_API_KEY` for channel verification/import, and set
+`MAIL_PROVIDER=smtp` with the `SMTP_*` values if contributors should receive
+mail. See [`docs/roadmap.md`](docs/roadmap.md) for the remaining launch work.
 
 ---
 
 ## Contributing
 
-Conventional Commits (`feat(player): click-to-seek`). Run `npm run typecheck && npm test` before opening a PR. Only submit lyrics you have the right to share — see [`docs/product.md`](docs/product.md) §5.4.
+Conventional Commits (`feat(player): click-to-seek`). Run `npm run typecheck && npm run lint && npm test` before opening a PR. Only submit lyrics you have the right to share — see [`docs/product.md`](docs/product.md) §5.4.
 
 ---
 
