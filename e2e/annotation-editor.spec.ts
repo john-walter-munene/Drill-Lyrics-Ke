@@ -45,14 +45,16 @@ test.describe('moderator annotation editor', () => {
     ].join('\n');
 
     const submissionId = await test.step('a contributor submits lyrics', async () => {
-      const songs = await request.get(`${API_URL}/api/songs?q=${encodeURIComponent(CATALOGUE_SONG_SLUG)}`);
-      expect(songs.ok(), 'the songs list must be readable').toBeTruthy();
-      const song = (await songs.json() as { items: { id: string; slug: string }[] }).items
-        .find((item) => item.slug === CATALOGUE_SONG_SLUG);
-      expect(song, `seeded song ${CATALOGUE_SONG_SLUG} must exist — run npm run db:seed`).toBeTruthy();
+      // By slug, not by title: `?q=` is a title search, and a slug such as
+      // `masicka-update-official-video` never matches one — which made this test
+      // fail on "seeded song … must exist" even on a correctly seeded stack.
+      const songRes = await request.get(`${API_URL}/api/songs/${encodeURIComponent(CATALOGUE_SONG_SLUG)}`);
+      expect(songRes.ok(), `seeded song ${CATALOGUE_SONG_SLUG} must exist — run npm run db:seed`).toBeTruthy();
+      const song = (await songRes.json()) as { id: string; slug: string };
+      expect(song.id, `seeded song ${CATALOGUE_SONG_SLUG} must be published`).toBeTruthy();
 
       const created = await request.post(`${API_URL}/api/lyrics/submissions`, {
-        data: { songId: song!.id, markdown: lyrics, note: marker },
+        data: { songId: song.id, markdown: lyrics, note: marker },
       });
       expect(created.ok(), await created.text()).toBeTruthy();
       const body = await created.json() as { id: string; status: string };
@@ -71,24 +73,40 @@ test.describe('moderator annotation editor', () => {
 
     // The card for *this* submission. Scoping every later query to it is what
     // stops the test from passing on some other pending review in the queue.
-    const card = page.locator('article.lyrics-review-card').filter({ hasText: marker });
+    // `.first()`: the queue is oldest-first, and a run that failed before its
+    // cleanup can leave an earlier pending fixture behind; this run's marker is
+    // the only one that must be acted on.
+    const card = page.locator('article.lyrics-review-card').filter({ hasText: marker }).first();
 
     await test.step('the submission is in the pending queue', async () => {
       await page.getByRole('button', { name: 'Lyrics review' }).click();
       await expect(page.getByLabel('Submission status')).toHaveValue('pending');
       await expect(card).toBeVisible();
-      await expect(card.getByText(`${PHRASE} ${marker}`)).toBeVisible();
+      // The submitted line, as the review editor renders it. Scoped to the line
+      // element: the same text also sits in the annotation editor's `Line`
+      // dropdowns, so a plain text match resolves to several nodes.
+      await expect(card.locator('.lyrics-sync-editor__line-text').filter({ hasText: `${PHRASE} ${marker}` })).toHaveCount(1);
     });
 
     await test.step('an annotation is anchored to the first line', async () => {
       const editor = card.getByRole('region', { name: 'Lyric annotations' });
-      await editor.getByLabel('Line').selectOption({ index: 0 });
-      await editor.getByLabel('Phrase').fill(PHRASE);
-      await editor.getByLabel('Explanation').fill(EXPLANATION);
+      // Scoped by each label's exact text. Once one annotation exists its row
+      // renders its own `Phrase`/`Explanation` inputs inside the same form, so a
+      // plain `getByLabel('Phrase')` matches two controls.
+      const form = editor.locator('.lyrics-annotation-editor__form');
+      const phraseInput = form.locator('label', { hasText: 'Phrase' }).locator('input');
+      const explanationInput = form.locator('label', { hasText: 'Explanation' }).locator('textarea');
+      // `.last()`: the annotation list above the form carries a `Line for
+      // annotation N` selector too, and the add-form's own `Line` is last on the
+      // page. `exact: true` is not used — the label wraps the control, and the
+      // accessible name then also includes the option text.
+      await form.getByLabel('Line').last().selectOption({ index: 0 });
+      await phraseInput.fill(PHRASE);
+      await explanationInput.fill(EXPLANATION);
       await editor.getByRole('button', { name: 'Add annotation' }).click();
 
       // The editor lists it, and `resolveAnnotations` accepted it (no alert).
-      await expect(editor.getByText(new RegExp(PHRASE))).toBeVisible();
+      await expect(editor.locator('.lyrics-annotation-editor__list')).toContainText(PHRASE);
       await expect(editor.locator('[role="alert"]')).toHaveCount(0);
       await expect(editor.getByText('1 annotation')).toBeVisible();
     });
@@ -98,12 +116,15 @@ test.describe('moderator annotation editor', () => {
       // appear in the line it is anchored to. A phrase from a *different* line
       // must leave the Add button disabled rather than saving a drifting anchor.
       const editor = card.getByRole('region', { name: 'Lyric annotations' });
-      await editor.getByLabel('Line').selectOption({ index: 1 });
-      await editor.getByLabel('Phrase').fill(PHRASE);
-      await editor.getByLabel('Explanation').fill('This phrase is not on line 2.');
+      const form = editor.locator('.lyrics-annotation-editor__form');
+      const phraseInput = form.locator('label', { hasText: 'Phrase' }).locator('input');
+      const explanationInput = form.locator('label', { hasText: 'Explanation' }).locator('textarea');
+      await form.getByLabel('Line').last().selectOption({ index: 1 });
+      await phraseInput.fill(PHRASE);
+      await explanationInput.fill('This phrase is not on line 2.');
       await expect(editor.getByRole('button', { name: 'Add annotation' })).toBeDisabled();
-      await editor.getByLabel('Phrase').fill('');
-      await editor.getByLabel('Explanation').fill('');
+      await phraseInput.fill('');
+      await explanationInput.fill('');
     });
 
     await test.step('approving publishes the version with its annotation', async () => {

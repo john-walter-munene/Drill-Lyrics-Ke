@@ -493,7 +493,8 @@ function ArtistsPanel({ items, busy, act, onReviewDrafts }: {
         <h2>Add an artist from YouTube</h2>
         <p className="muted">
           Paste the artist&apos;s channel link (<code>@handle</code>, <code>/channel/UC…</code>) or any one of their
-          videos. The whole channel is read and every music upload becomes a draft song here.
+          videos. The whole channel is read and every music upload is published straight into the
+          catalogue. Uploads that do not clearly look like music become drafts under <em>Song imports</em>.
         </p>
         <label htmlFor="acquire-channel" style={{ width: '100%' }}>YouTube link
           <input id="acquire-channel" name="channel" required placeholder="https://www.youtube.com/@artist or a video link" />
@@ -542,7 +543,7 @@ function ArtistsPanel({ items, busy, act, onReviewDrafts }: {
               <ChannelVideos artistId={item.id} />
               <div style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
                 <button type="button" className="btn btn--primary" disabled={busy || !!working} onClick={() => void sync(item.id)}>
-                  {syncState?.pausedByFilter ? 'Resume import' : 'Sync whole channel'}
+                  Sync whole channel
                 </button>
                 {syncState?.pausedByFilter ? (
                   <button type="button" className="btn" disabled={busy || !!working} onClick={() => void sync(item.id, { importAll: true })}>
@@ -591,7 +592,9 @@ function ChannelVideos({ artistId }: { artistId: string }) {
     if (open) { setOpen(false); return; }
     setOpen(true);
     if (items) return;
-    const result = await apiRequest<SongDraftItem[]>('GET', `/api/admin/songs/drafts?artistId=${encodeURIComponent(artistId)}`);
+    // Everything imported for this channel, published included: the question
+    // this answers is "did the whole catalogue come in?".
+    const result = await apiRequest<SongDraftItem[]>('GET', `/api/admin/songs/drafts?all=true&artistId=${encodeURIComponent(artistId)}`);
     setItems(result.ok ? toItems<SongDraftItem>(result.data) : []);
   }
 
@@ -614,7 +617,7 @@ function ChannelVideos({ artistId }: { artistId: string }) {
           ))}
         </ul>
       ) : null}
-      {open && items && !items.length ? <p className="muted">No drafts left — everything imported here is published.</p> : null}
+      {open && items && !items.length ? <p className="muted">Nothing imported yet — press <em>Sync whole channel</em>.</p> : null}
     </div>
   );
 }
@@ -627,7 +630,8 @@ function ImportResult({ result, onImportAll, busy }: { result: AddArtistResponse
       <article className="panel" style={{ marginTop: '1rem' }}>
         <h2>{result.artist.name} is already in the catalogue</h2>
         <p className="muted">
-          {result.summary?.published ?? 0} published · {result.summary?.drafts ?? 0} drafts.{' '}
+          {result.summary?.published ?? 0} published · {result.summary?.drafts ?? 0} drafts ·{' '}
+          <a href={`/artists/${result.artist.slug}`}>open their artist page</a>.{' '}
           Use <em>Sync whole channel</em> below to pick up new uploads.
         </p>
       </article>
@@ -637,18 +641,32 @@ function ImportResult({ result, onImportAll, busy }: { result: AddArtistResponse
     return (
       <article className="panel" style={{ marginTop: '1rem' }}>
         <h2>{result.artist.name} was added</h2>
-        <p className="muted">This channel was already in the catalogue; nothing was re-imported.</p>
+        <p className="muted">
+          This channel was already in the catalogue; nothing was re-imported.{' '}
+          <a href={`/artists/${result.artist.slug}`}>Open their artist page</a>.
+        </p>
       </article>
     );
   }
   return (
     <article className="panel" style={{ marginTop: '1rem' }}>
       <h2>{result.artist.name}: imported</h2>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Their catalogue is live at{' '}
+        <a href={`/songs?artist=${encodeURIComponent(result.artist.slug)}`}>the song list</a> and on{' '}
+        <a href={`/artists/${result.artist.slug}`}>their artist page</a>.
+      </p>
       <ul>
         <li><strong>{sync.created}</strong> new songs, <strong>{sync.updated}</strong> already catalogued</li>
         <li>{sync.scanned} uploads read · {sync.skipped} skipped as not music (shorts, live, teasers)</li>
         <li>{sync.drafts} drafts waiting in <em>Song imports</em> · {sync.published} in the public catalogue</li>
       </ul>
+      {sync.awaitingRelease ? (
+        <p className="muted">
+          {sync.awaitingRelease} upload{sync.awaitingRelease === 1 ? '' : 's'} {sync.awaitingRelease === 1 ? 'is' : 'are'}{' '}
+          scheduled rather than released yet; the next sync adds them once they go live.
+        </p>
+      ) : null}
       {sync.error ? (
         <p role="alert" className="player-shell__error">
           The import stopped early: {sync.error}.{' '}
@@ -665,9 +683,14 @@ function ImportResult({ result, onImportAll, busy }: { result: AddArtistResponse
           was ruled out as not music. Use <em>Import every upload</em> to override that.
         </p>
       ) : null}
+      {sync.complete && sync.autoPublished === false && sync.created ? (
+        <p className="muted">
+          The imported songs are drafts because YOUTUBE_AUTO_PUBLISH=false. Publish them from <em>Song imports</em>.
+        </p>
+      ) : null}
       {sync.pausedReason ? (
         <div>
-          <p role="alert" className="player-shell__error">{sync.pausedReason}</p>
+          <p className="muted">{sync.pausedReason}</p>
           <button type="button" className="btn" disabled={busy} onClick={onImportAll}>Import every upload anyway</button>
         </div>
       ) : null}

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
+import { selectPublishedVersion } from './published-version';
 
 export interface ListSongsQuery {
   q?: string;
@@ -12,12 +13,15 @@ export class SongsService {
   constructor(private readonly prisma: PrismaService) { }
 
   /**
-   * The three home-page shelves: new, recently synchronized, emerging artists.
+   * The home-page shelves: random, new, recently synchronized, emerging artists.
    *
-   * One request, three small queries — a visitor arriving at `/` must not pay
-   * for four round trips. Every feed reads published rows only, so nothing here
+   * One request, four small queries — a visitor arriving at `/` must not pay
+   * for five round trips. Every feed reads published rows only, so nothing here
    * can surface a draft.
    *
+   *   - **random** — a handful of songs drawn from the WHOLE catalogue, not the
+   *     first page of it. The home page is the shop window, and a fixed "first
+   *     six by release date" showed the same records to everyone forever.
    *   - **new** — newest releases; the thing a regular visitor checks for.
    *   - **synced** — songs whose published version carries timings
    *     (`syncedVersionId` is the denormalised pointer kept for exactly this).
@@ -27,7 +31,8 @@ export class SongsService {
    *     with at least one song come first and the count decides.
    */
   async feeds() {
-    const [newSongs, syncedSongs, emerging] = await Promise.all([
+    const [randomSongs, newSongs, syncedSongs, emerging] = await Promise.all([
+      this.randomSongs(6),
       this.prisma.song.findMany({
         where: { status: 'published' },
         orderBy: [{ releaseDate: 'desc' }, { createdAt: 'desc' }],
@@ -54,6 +59,7 @@ export class SongsService {
     ]);
 
     return {
+      randomSongs: randomSongs.map((song) => this.toSong(song)),
       newSongs: newSongs.map((song) => this.toSong(song)),
       syncedSongs: syncedSongs.map((song) => this.toSong(song)),
       emergingArtists: emerging.map((artist) => ({
@@ -63,6 +69,36 @@ export class SongsService {
         publishedSongs: artist._count.songs,
       })),
     };
+  }
+
+  /**
+   * `count` published songs picked at random from the whole catalogue.
+   *
+   * A random `offset` needs no `ORDER BY random()` (which sorts the entire
+   * table) and no extra index: pick a page, read it, wrap around the end so a
+   * short final page still fills the shelf.
+   */
+  private async randomSongs(count: number) {
+    const total = await this.prisma.song.count({ where: { status: 'published' } });
+    if (total === 0) return [];
+    const take = Math.min(count, total);
+    const skip = Math.floor(Math.random() * Math.max(1, total - take + 1));
+    const songs = await this.prisma.song.findMany({
+      where: { status: 'published' },
+      orderBy: { id: 'asc' },
+      skip,
+      take,
+      include: this.feedInclude(),
+    });
+    if (songs.length >= take) return songs;
+    const missing = take - songs.length;
+    const wrapped = await this.prisma.song.findMany({
+      where: { status: 'published' },
+      orderBy: { id: 'asc' },
+      take: missing,
+      include: this.feedInclude(),
+    });
+    return [...songs, ...wrapped];
   }
 
   /** The same shape the catalogue returns, so a card renders identically. */
@@ -115,19 +151,29 @@ export class SongsService {
     return this.toSong(song);
   }
 
+  /**
+   * The published lyrics for a song.
+   *
+   * Publishes **the** version `Song.syncedVersionId` points at, not simply the
+   * newest `published` row. Those are the same version on most songs, but not on
+   * one whose latest lyrics were unpublished: `unpublishLyrics` flips
+   * `published: false` on that single version, so the next-newest published row
+   * is an older, *superseded* version — and serving it silently replaced the
+   * lyrics a reader saw with the edition the moderator had just taken down.
+   */
   async lyrics(slug: string) {
     const song = await this.prisma.song.findFirst({
       where: { slug, status: 'published' },
       select: {
+        syncedVersionId: true,
         versions: {
           where: { published: true },
           orderBy: { version: 'desc' },
-          take: 1,
           include: { lines: { orderBy: { index: 'asc' } }, annotations: true },
         },
       },
     });
-    const version = song?.versions[0];
+    const version = selectPublishedVersion(song?.versions ?? [], song?.syncedVersionId ?? null);
     if (!version) throw new NotFoundException('Published lyrics not found');
     return {
       versionId: version.id,

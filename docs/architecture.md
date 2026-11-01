@@ -338,15 +338,19 @@ Every timing edit is recorded in `AuditLog` with its timed-line count.
 Artist channel intake uses the official YouTube Data API, not page scraping.
 Guests or members may submit a channel ID, supported channel URL, or @handle.
 The channel and sample uploads are saved as a suggestion for a moderator to
-review. An administrator may add a channel directly. Imports create draft song
-candidates; each upload must be reviewed before public catalogue publication.
-`Artist.verified` represents identity/rights verification and is independent
-from `youtubeSyncEnabled`, which controls metadata import.
+review. An administrator may add a channel directly, which imports the channel
+and publishes its music uploads straight into the catalogue (see
+[Channel import](#channel-import)). `Artist.verified` represents
+identity/rights verification and is independent from `youtubeSyncEnabled`,
+which controls metadata import.
 
 ### Channel import
 
 `YoutubeSyncService.syncArtistNow(artistId, { force, pages, restart })` owns the
-whole acquisition path (`apps/api/src/workers/youtube-sync.service.ts`).
+whole acquisition path (`apps/api/src/workers/youtube-sync.service.ts`). Adding
+an artist from the admin screen calls it for the entire channel in one request;
+the periodic worker and the per-artist *Sync whole channel* button call the same
+method.
 
 1. **Resolve.** A pasted reference — `@handle`, `/channel/UC…`, `/c/`, `/user/`,
    or any video URL — becomes a channel id, then an uploads playlist id.
@@ -356,14 +360,30 @@ whole acquisition path (`apps/api/src/workers/youtube-sync.service.ts`).
 3. **Read a page, batch the metadata.** All 50 uploads of a page are resolved in
    one `videos.list` call (`id` up to 50 ids, one quota unit). Per-video calls, as
    an earlier version used, spent one unit per upload.
-4. **Classify** with `youtube-classify.ts` (pure, unit-tested). Music-category
-   uploads become `draft` songs; a `video`/`unclear` verdict becomes a review
-   candidate with `youtubeImportKind` set; shorts, live streams and sub-30s
-   clips are not imported at all. A run of 25 non-music uploads pauses the walk
-   unless `force` is set.
+4. **Classify** with `youtube-classify.ts` (pure, unit-tested). A `audio`/`video`
+   verdict is a music upload and is **published** into the catalogue
+   (`YOUTUBE_AUTO_PUBLISH`, default on). An `unclear` verdict becomes a review
+   candidate with `youtubeImportKind` set, left as a draft for *Song imports*.
+   Shorts, live streams and sub-30s clips are not imported at all.
 5. **Save after every page.** `YoutubeChannelSync` holds the cursor
    (`nextPageToken`), `initialImportComplete` and the last counts. A failure on
    page 30 of 40 keeps pages 1–29 and resumes at 30.
+
+Classification never stops the walk. A channel whose uploads do not look like
+music is reported once on the result (`pausedReason`, also kept as
+`YoutubeChannelSync.lastError`) and the rest of the channel is still imported —
+stopping left the remainder unimported and the cursor on the same page, which is
+how a real artist ended up with nothing in the app. `force` (`importAll` in the
+admin UI) imports the `unclear` uploads too; it never imports a short or a live
+stream.
+
+A **scheduled premiere** is the one case that needs care: YouTube keeps
+`liveBroadcastContent: 'upcoming'` on a premiere after its scheduled time has
+passed. The classifier treats it as released once the upload's
+`videoPublishedAt` (taken from the playlist entry, not the video's own upload
+date) is in the past, so a released song is not silently skipped. Uploads still
+awaiting their premiere are counted separately on the result
+(`awaitingRelease`) and picked up by a later sync.
 
 Guarantees the cabinet relies on:
 
@@ -372,16 +392,31 @@ Guarantees the cabinet relies on:
   overwrite each other's position, which is precisely how an import appears to
   hang or start over.
 - **Idempotent by video id.** `Song.youtubeVideoId` is unique and every import
-  upserts on it, so re-running a sync never duplicates a song.
+  upserts on it, so re-running a sync never duplicates a song. A video linked
+  from a second artist gains a feature credit instead of a second row.
+- **A draft is promoted, not duplicated.** A song imported while auto-publish
+  was off becomes published the next time its channel is read.
 - **Partial results, not all-or-nothing.** A quota or network failure throws
   nothing away and is reported on the result (`error`) so the admin UI can say
   what was saved and how to continue.
 - A second `Sync whole channel` after a finished walk is a genuine re-check;
   `restart: true` walks from the newest upload again.
+- **The catalogue is visible immediately.** An import that published songs
+  invalidates the web app's cached catalogue pages (`POST
+  /api/revalidate`), so `/songs`, `/artists` and the artist's own page show the
+  new songs without waiting out the ISR window.
 
 Configuration lives in one place: `YOUTUBE_API_KEY` in the repo-root `.env`
 (see [`runbook.md`](./runbook.md#youtube-import)). `EMBED_WORKER` runs the same
 service on an interval inside the API process for new uploads.
+
+### Browsing a synced catalogue
+
+Page sizes are 20 songs. `/songs` and `/artists/<slug>` both paginate, and
+`/songs?artist=<slug>` filters to one artist, so a channel with hundreds of
+uploads is fully reachable. Every list row — on `/songs`, the home page and an
+artist page — carries a play button that starts the persistent player, so a
+synced song plays exactly like a seeded one.
 
 ## 6. Web rendering
 
@@ -392,6 +427,7 @@ service on an interval inside the API process for new uploads.
 | Submit | Client form, server-validated | Live Markdown feedback without a round trip |
 | Search | Dynamic, client-refined | Query-dependent |
 | Admin, account | Dynamic, authenticated | Never cached |
+| Home `/` | Static, ISR **60 s** | The "Start here" shelf is random; a longer window served the same songs to everyone |
 | Player | Client component in root layout | Survives navigation |
 
 SEO is a growth channel, so it is a build-time contract:

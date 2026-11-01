@@ -87,10 +87,15 @@ export interface SyncResult {
   created: number;
   updated: number;
   skipped: number;
+  /** Uploads YouTube reports as unreleased (a scheduled premiere or upcoming stream). */
+  awaitingRelease?: number;
   drafts: number;
   published: number;
   complete: boolean;
+  /** Some uploads were not confirmed as music; they were imported as drafts. */
   pausedReason: string | null;
+  /** Music uploads were published straight into the catalogue. */
+  autoPublished?: boolean;
   error?: string;
 }
 

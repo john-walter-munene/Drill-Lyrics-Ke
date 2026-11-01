@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PlaybackState, PlayerTrack } from './PlayerProvider';
 import { usePlayer } from './PlayerProvider';
-import TransportControls, { QueueList } from './TransportControls';
+import TransportControls, { QueueList, formatTime } from './TransportControls';
 
 interface YouTubePlayer {
   playVideo(): void;
@@ -49,9 +49,24 @@ function loadYouTubeApi(): Promise<YouTubeApi> {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (apiPromise) return apiPromise;
   apiPromise = new Promise<YouTubeApi>((resolve, reject) => {
+    // If the API became ready between the check above and the script landing,
+    // the ready callback may already have fired; poll briefly as a backstop so
+    // a lapse here cannot leave the player permanently "loading".
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      if (window.YT?.Player) { settled = true; resolve(window.YT); }
+    };
+    const poll = window.setInterval(() => {
+      settle();
+      if (settled) window.clearInterval(poll);
+    }, 200);
+    window.setTimeout(() => window.clearInterval(poll), 20_000);
+
     const previousCallback = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
       previousCallback?.();
+      settled = true;
       if (window.YT) resolve(window.YT);
       else reject(new Error('YouTube player API did not initialize'));
     };
@@ -101,19 +116,44 @@ export default function PlayerSurface({ track }: { track: PlayerTrack | null }) 
   const [volume, setVolume] = useState(75);
   const [muted, setMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  // The full transport deck folds away; the play/pause bar under the video
+  // stays, so playback is always controllable while the video is on screen.
+  const [controlsOpen, setControlsOpen] = useState(false);
+  // The YouTube IFrame API does not survive navigation: on the next page the
+  // API object is still on `window` but the player it configured is gone, so a
+  // second `new YT.Player` never becomes ready and the whole shell stays blank.
+  // Keying the container on this id forces React to create a NEW element each
+  // mount, which is what the API needs to initialise against.
+  const [mountId] = useState(() => Math.random().toString(36).slice(2));
 
   latestTrackRef.current = track;
   playbackStateRef.current = playbackState;
   endedRef.current = ended;
 
+  // A new page has no live player: forget the old instance so the effect below
+  // re-mounts it on the element this render owns.
   useEffect(() => {
-    if (!track?.youtubeVideoId || !containerRef.current || playerRef.current) return;
+    playerRef.current = null;
+    lastVideoIdRef.current = null;
+    setReady(false);
+    return () => {
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    };
+  }, [mountId]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    // `containerRef.current` is an element; YouTube's API replaces that element
+    // with its own <iframe> when the player is created. Nothing in this effect
+    // may depend on the node still being the one React rendered.
+    if (!track?.youtubeVideoId || !container || playerRef.current) return;
     const initialVideoId = track.youtubeVideoId;
     let cancelled = false;
     void loadYouTubeApi().then((YT) => {
-      if (cancelled || !containerRef.current || playerRef.current) return;
+      if (cancelled || playerRef.current) return;
       lastVideoIdRef.current = initialVideoId;
-      const player = new YT.Player(containerRef.current, {
+      const player = new YT.Player(container, {
         videoId: initialVideoId,
         playerVars: {
           autoplay: 0,
@@ -243,7 +283,7 @@ export default function PlayerSurface({ track }: { track: PlayerTrack | null }) 
 
           <div className="player-shell__layout">
             <div className="player-shell__video">
-              <div ref={containerRef} className="player-shell__iframe" />
+              <div key={mountId} ref={containerRef} className="player-shell__iframe" />
               {!track.youtubeVideoId ? (
                 <div className="player-shell__fallback" role="status">
                   <span aria-hidden="true">♫</span>
@@ -264,35 +304,74 @@ export default function PlayerSurface({ track }: { track: PlayerTrack | null }) 
             <div className="player-shell__details">
               <div className="player-shell__track">
                 <span className="player-shell__mode-label">{playbackMode === 'listen' ? 'Listening mode' : 'Now playing'}</span>
-                <strong>{track.title}</strong>
-                <span className="muted">{track.artistNames.length ? track.artistNames.join(', ') : 'Artist details coming soon'}</span>
               </div>
               {playbackMode === 'listen' && track.youtubeVideoId ? (
                 <img className="player-shell__artwork" src={`https://i.ytimg.com/vi/${track.youtubeVideoId}/hqdefault.jpg`} alt={`Thumbnail for ${track.title}`} />
               ) : null}
-              <TransportControls
-                currentMs={currentMs}
-                durationMs={durationMs}
-                playbackState={playbackState}
-                ready={ready}
-                hasVideo={Boolean(track.youtubeVideoId)}
-                volume={volume}
-                muted={muted}
-                playbackRate={playbackRate}
-                shuffle={shuffle}
-                repeatMode={repeatMode}
-                queueLength={queue.length}
-                isLastInQueue={queue[queue.length - 1]?.slug === track.slug}
-                onSeek={seekTo}
-                onPlayPause={playPause}
-                onPrevious={previous}
-                onNext={next}
-                onToggleShuffle={toggleShuffle}
-                onCycleRepeat={cycleRepeatMode}
-                onVolume={changeVolume}
-                onToggleMute={() => (muted ? playerRef.current?.unMute() : playerRef.current?.mute())}
-                onRate={changeRate}
-              />
+
+              <div className="player-shell__bar">
+                <button
+                  className="player-play-button"
+                  type="button"
+                  onClick={playPause}
+                  disabled={!ready || !track.youtubeVideoId}
+                  aria-label={playbackState === 'playing' ? 'Pause' : 'Play'}
+                  title="Play or pause (Space)"
+                >
+                  {playbackState === 'playing' ? 'Ⅱ' : playbackState === 'buffering' ? '…' : '▶'}
+                </button>
+                <div className="player-shell__bar-track">
+                  <strong>{track.title}</strong>
+                  <small>{track.artistNames.length ? track.artistNames.join(', ') : 'Artist details coming soon'}</small>
+                </div>
+                <input
+                  className="player-shell__bar-seek"
+                  aria-label="Seek song"
+                  type="range"
+                  min="0"
+                  max={Math.max(1, durationMs)}
+                  value={Math.min(currentMs, durationMs || 0)}
+                  disabled={!ready || !durationMs}
+                  onChange={(event) => seekTo(Number(event.target.value))}
+                />
+                <span className="player-shell__bar-time">
+                  {formatTime(currentMs)} / {durationMs ? formatTime(durationMs) : '--:--'}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                className="btn btn--sm"
+                aria-expanded={controlsOpen}
+                onClick={() => setControlsOpen((open) => !open)}
+              >
+                {controlsOpen ? 'Hide controls' : 'More controls'}
+              </button>
+              {controlsOpen ? (
+                <TransportControls
+                  currentMs={currentMs}
+                  durationMs={durationMs}
+                  playbackState={playbackState}
+                  ready={ready}
+                  hasVideo={Boolean(track.youtubeVideoId)}
+                  volume={volume}
+                  muted={muted}
+                  playbackRate={playbackRate}
+                  shuffle={shuffle}
+                  repeatMode={repeatMode}
+                  queueLength={queue.length}
+                  isLastInQueue={queue[queue.length - 1]?.slug === track.slug}
+                  onSeek={seekTo}
+                  onPlayPause={playPause}
+                  onPrevious={previous}
+                  onNext={next}
+                  onToggleShuffle={toggleShuffle}
+                  onCycleRepeat={cycleRepeatMode}
+                  onVolume={changeVolume}
+                  onToggleMute={() => (muted ? playerRef.current?.unMute() : playerRef.current?.mute())}
+                  onRate={changeRate}
+                />
+              ) : null}
               <div className="player-shell__secondary-controls">
                 <button className="btn btn--sm" type="button" onClick={() => setQueueOpen(!queueOpen)} aria-expanded={queueOpen}>
                   Queue · {queue.length}

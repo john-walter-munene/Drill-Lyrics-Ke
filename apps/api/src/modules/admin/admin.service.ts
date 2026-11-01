@@ -230,7 +230,7 @@ export class AdminService {
   previewChannel(reference: string) {
     if (!this.youtube.configured()) {
       throw new ServiceUnavailableException(
-        'Reading a YouTube channel needs YOUTUBE_API_KEY. Set it in infra/.env and restart the API.',
+        'Reading a YouTube channel needs YOUTUBE_API_KEY. Set it in the repo-root .env, then re-create the api container (npm run dev:stack:restart).',
       );
     }
     return this.youtube.resolveChannel(reference).then((channel) => ({
@@ -258,7 +258,7 @@ export class AdminService {
       // First-run guidance: a key is only half of it, and a form that cannot
       // import is worse than one that says what is missing.
       ...(this.youtube.configured() ? {} : {
-        setup: 'Set YOUTUBE_API_KEY in infra/.env (Google Cloud Console → APIs & Services → enable "YouTube Data API v3" → Credentials → API key), then restart the API.',
+        setup: 'Set YOUTUBE_API_KEY in the repo-root .env (Google Cloud Console → APIs & Services → enable "YouTube Data API v3" → Credentials → API key), then re-create the api container: npm run dev:stack:restart.',
       }),
     };
   }
@@ -292,10 +292,16 @@ export class AdminService {
     }));
   }
 
-  async songDrafts(query: { artistId?: string } = {}) {
+  /**
+   * The review queue: imported songs waiting to be published.
+   *
+   * `all=true` returns everything imported for the artist — published included
+   * — which is what "did the whole channel come in?" is answered with.
+   */
+  async songDrafts(query: { artistId?: string; all?: boolean } = {}) {
     return this.prisma.song.findMany({
       where: {
-        status: { in: ['draft', 'pending'] },
+        ...(query.all ? { youtubeImported: true } : { status: { in: ['draft', 'pending'] } }),
         ...(query.artistId ? { artists: { some: { artistId: query.artistId } } } : {}),
       },
       orderBy: [{ releaseDate: 'desc' }, { createdAt: 'desc' }],
@@ -303,7 +309,21 @@ export class AdminService {
       include: { artists: { include: { artist: { select: { name: true } } } } },
     });
   }
-  async publishSong(id: string, actorId: string) { const song = await this.prisma.song.findUnique({ where: { id }, select: { id: true, status: true } }); if (!song) throw new NotFoundException('Song not found'); return this.prisma.$transaction(async (tx) => { const updated = await tx.song.update({ where: { id }, data: { status: 'published' } }); await tx.auditLog.create({ data: { actorId, action: 'song.published', entity: 'song', entityId: id } }); return updated; }); }
+  async publishSong(id: string, actorId: string) {
+    const song = await this.prisma.song.findUnique({
+      where: { id },
+      select: { id: true, status: true, artists: { select: { artist: { select: { slug: true } } } } },
+    });
+    if (!song) throw new NotFoundException('Song not found');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.song.update({ where: { id }, data: { status: 'published' } });
+      await tx.auditLog.create({ data: { actorId, action: 'song.published', entity: 'song', entityId: id } });
+      return row;
+    });
+    // A published song must not wait out the web app's page cache.
+    await this.youtube.revalidateCatalogueNow(song.artists[0]?.artist.slug);
+    return updated;
+  }
 
   private async updateSubmission(id: string, data: Prisma.LyricsSubmissionUpdateInput, actorId: string, action: string) {
     const exists = await this.prisma.lyricsSubmission.findUnique({ where: { id }, select: { id: true } });

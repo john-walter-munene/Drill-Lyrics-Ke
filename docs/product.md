@@ -81,14 +81,21 @@ not a preview of everything. The rule used to cut scope:
 | 9 | **Drill events** | Upcoming events with venue, date, lineup (artists + DJs) and ticket link. |
 | 10 | **About / Support / Developers** | `/about`, `/support` and `/developers` explain the project, ways to help, and how developers can contribute to the open-source codebase. |
 | 11 | **Accounts** | Passport Local email/password, JWT sessions, account page and roles (`member`, `contributor`, `moderator`, `admin`). Password reset by emailed single-use link, email confirmation, data export, and self-service deletion. |
-| 12 | **Artist intake** | Guest channel suggestions, YouTube API verification, staff review and draft upload imports. |
-| 13 | **Admin workspace** | Lyrics queue, artist suggestions, song draft review, role management and audit log. |
+| 12 | **Artist intake** | Guest channel suggestions, YouTube API verification, staff review, and full catalogue import from a channel. |
+| 13 | **Admin workspace** | Lyrics queue, artist suggestions, channel sync, song import review, role management and audit log. |
 
 Lyrics can be submitted without an account. Signed-in contributors can keep a
 submission history and opt into public credit when a submission is published.
 Public recognition is not a promise of payment. Songs and video remain on
-YouTube; uploaded channel videos start as private catalogue drafts until a
-human confirms they are drill tracks.
+YouTube, which is the only player.
+
+**Acquisition is one link.** An admin pastes an artist's channel (or any one of
+their videos) into *Admin → Artists & sync* and the whole channel is read: every
+music upload is published straight into the catalogue and plays like any other
+song, on `/songs` and on the artist's own page. Uploads the importer cannot
+confirm as music are held as drafts for review rather than published; shorts and
+live streams are never imported. `YOUTUBE_AUTO_PUBLISH=false` makes every import
+a draft, for a deployment that wants a human on every song.
 
 ### 4.2 Deliberately out of v1
 
@@ -126,6 +133,18 @@ V1 is "shipped" when all of these hold:
 
 - One persistent player mounted in the root layout; navigation between songs
   never reloads the page.
+- **Playback never stops while you browse.** Once a track is playing it keeps
+  playing across every route in the app — sections, song pages, artist pages,
+  admin. Two things make that true and are easy to break: the YouTube player must
+  be re-initialised on each page's container (the API does not survive
+  navigation), and a song page must not re-register its track while something is
+  already playing. Both are covered by `e2e/player-persistence.spec.ts`.
+- A full page load loses the live player (the browser tears the iframe down), so
+  the track and queue are kept in `sessionStorage`: after a reload the same song
+  is cued and one click from resuming. It is deliberately not auto-played — a
+  browser blocks that, and a page load is not a play gesture.
+- The player is pinned to the top while a track is loaded, so the catalogue
+  scrolls underneath it and playback stays controllable from any section.
 - The player owns the clock through the YouTube IFrame Player API. The lyrics
   view reads that clock and re-renders the active line as playback advances or
   the listener scrubs in YouTube's controls.
@@ -140,7 +159,9 @@ V1 is "shipped" when all of these hold:
   speed, and a selectable queue. Space toggles playback; left/right seek ten
   seconds; up/down adjust volume; N/P change tracks. Shortcuts never intercept
   typing or focused controls.
-- Listen/Watch is a per-song preference. Both modes use the same visible,
+- Listen/Watch is a preference for the **whole player**, not one song: choosing
+  it once carries over to every track and to the next visit (stored in
+  `localStorage` under `drill-lyrics-mode`). Both modes use the same visible,
   interactive YouTube player; Listen gives the lyrics more room. The queue and
   player controls do not extract or separately stream audio.
 - Synchronized lyric highlighting follows the YouTube clock. Listeners can

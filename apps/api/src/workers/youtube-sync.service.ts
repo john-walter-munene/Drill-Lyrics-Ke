@@ -62,14 +62,28 @@ export interface SyncResult {
   updated: number;
   /** Uploads the classifier ruled out (shorts, live, teasers). */
   skipped: number;
+  /**
+   * Uploads left out because YouTube reports them as unreleased: a scheduled
+   * premiere or an upcoming stream. They are not in the catalogue yet, and a
+   * later sync picks them up once they go live.
+   */
+  awaitingRelease?: number;
   /** How many candidate drafts are on this channel now. */
   drafts: number;
   /** How many are already part of the public catalogue. */
   published: number;
   /** True only when the whole channel has been walked. */
   complete: boolean;
-  /** Set when the import stopped early because the channel is not all music. */
+  /**
+   * Set when the import stopped early because the channel is not all music.
+   *
+   * It does NOT stop the walk any more: every upload is still imported — the
+   * unclear ones as review candidates — so this reports that the classification
+   * filter is in effect for the rest of the channel.
+   */
   pausedReason: string | null;
+  /** Set when the import published music uploads instead of leaving drafts. */
+  autoPublished?: boolean;
   /**
    * Set when YouTube refused part-way through (quota, key, outage). Everything
    * read before the failure is already saved and the next sync resumes from the
@@ -77,17 +91,6 @@ export interface SyncResult {
    */
   error?: string;
 }
-
-/**
- * How many uploads may come back "unclear" in a row before an import pauses.
- *
- * This is the difference between "an artist with a few odd uploads" and "this
- * is not a music channel": a vlog or interview channel classifies as `unclear`
- * for page after page. The import stops, reports why, and the admin can press
- * "import all uploads" to override — the catalogue is never silently filled
- * with a react channel's back catalogue.
- */
-const UNCLEAR_PAUSE_THRESHOLD = 25;
 
 /** Data API playlist page size (the maximum). */
 const PAGE_SIZE = 50;
@@ -105,12 +108,14 @@ const PAGE_SIZE = 50;
 const VIDEO_BATCH_SIZE = 50;
 
 /**
- * Pages fetched per pass for the periodic worker. An explicit "sync now" from
- * the admin UI walks the WHOLE channel: that is the acquisition promise — one
- * link, the entire catalogue — and it is bounded by YouTube's own pagination
- * rather than by a token budget.
+ * Pages fetched per pass for the periodic worker **when YOUTUBE_WORKER_PAGES is
+ * not set**. A sync from the admin UI always walks the WHOLE channel: that is
+ * the acquisition promise — one link, the entire catalogue — and it is bounded
+ * by YouTube's own pagination rather than by a token budget. Unset therefore
+ * means "all pages" for the worker too; a busy deployment can cap the cycle by
+ * setting YOUTUBE_WORKER_PAGES.
  */
-const WORKER_PAGES_PER_PASS = 10;
+const WORKER_PAGES_DEFAULT = Number.POSITIVE_INFINITY;
 
 /** YouTube's "Music" category id. */
 const MUSIC_CATEGORY_ID = '10';
@@ -290,10 +295,12 @@ export class YoutubeSyncService {
    * Import everything an artist's channel has.
    *
    * One pass, from the first upload to the last: `complete` is true only when
-   * the final page was reached. `force` ignores the non-music pause and the
-   * classification filter — "import all uploads" in the admin UI. `restart`
-   * begins again at the newest upload instead of resuming at the saved token,
-   * for a channel whose earlier walk finished before it imported anything.
+   * the final page was reached. The classification filter decides what becomes
+   * a public song, never whether the walk continues. `force` imports uploads
+   * that could not be confirmed as music — "import all uploads" in the admin UI
+   * — and `restart` begins again at the newest upload instead of resuming at the
+   * saved token, for a channel whose earlier walk finished before it imported
+   * anything.
    *
    * Progress is saved **after every page**, so a failure on page 30 of 40 keeps
    * the 29 pages already imported and resumes at 30 next time.
@@ -338,16 +345,11 @@ export class YoutubeSyncService {
       create: { artistId },
       update: {},
     });
-    // A paused channel only resumes when the admin says so explicitly.
-    if (stored.pausedByFilter && !options.force) {
-      const summary = await this.channelSummary(artistId);
-      return {
-        scanned: 0, created: 0, updated: 0, skipped: 0,
-        drafts: summary.drafts, published: summary.published,
-        complete: stored.initialImportComplete,
-        pausedReason: this.pausedReason(),
-      };
-    }
+    // `pausedByFilter` is only a label now — the walk always continues — so a
+    // paused channel resumes like any other. It used to make every later sync
+    // return "0 scanned" and import nothing, which is exactly the state a
+    // channel that was added once and then stopped growing was stuck in.
+    const autoPublish = this.autoPublishEnabled();
     let uploadsPlaylistId = stored.uploadsPlaylistId;
     if (!uploadsPlaylistId) {
       const channels = await this.youtubeGet<YouTubeChannelResponse>('channels', {
@@ -361,14 +363,12 @@ export class YoutubeSyncService {
       await this.prisma.youtubeChannelSync.update({ where: { artistId }, data: { uploadsPlaylistId } });
     }
 
-    // A forced "import all" or a restart starts with a clean slate: no leftover
-    // pause, and, for a restart, no remembered position.
-    if ((options.force && stored.pausedByFilter) || options.restart) {
+    // A restart starts with a clean slate: no leftover pause, and no remembered
+    // position.
+    if (options.restart) {
       await this.prisma.youtubeChannelSync.update({
         where: { artistId },
-        data: options.restart
-          ? { pausedByFilter: false, initialImportComplete: false, nextPageToken: null }
-          : { pausedByFilter: false },
+        data: { pausedByFilter: false, initialImportComplete: false, nextPageToken: null },
       });
     }
     const sync = {
@@ -379,14 +379,14 @@ export class YoutubeSyncService {
 
     const totals: SyncResult = {
       scanned: 0, created: 0, updated: 0, skipped: 0, drafts: 0, published: 0,
-      complete: false, pausedReason: null,
+      complete: false, pausedReason: null, autoPublished: autoPublish,
     };
+    let publishedCount = 0;
+    let filterNoted = false;
 
     const maxPages = options.pages ?? Number.POSITIVE_INFINITY;
     let pageToken = sync.initialImportComplete ? undefined : sync.nextPageToken ?? undefined;
-    let consecutiveUnclear = 0;
     let completed = sync.initialImportComplete;
-    let paused = false;
     let failure: string | null = null;
 
     // The channel's own upload count, from the FIRST page, before any walk.
@@ -394,8 +394,7 @@ export class YoutubeSyncService {
     // extra. It is also the only bound that does not depend on YouTube's
     // `nextPageToken` behaving: a 141-upload channel once "scanned" 12,000
     // uploads because every cycle re-read the same pages.
-    const { total: channelTotal, firstPageToken } = await this.uploadsTotal(uploadsPlaylistId, pageToken, key);
-    if (pageToken === undefined) pageToken = firstPageToken;
+    const { total: channelTotal } = await this.uploadsTotal(uploadsPlaylistId, pageToken, key);
 
     try {
       let page = 0;
@@ -426,6 +425,14 @@ export class YoutubeSyncService {
         const infos = await this.videoInfoBatch(
           items.map((item) => item.contentDetails!.videoId!),
           key,
+          // The playlist entry carries the date the upload was PUBLISHED; the
+          // video's own `snippet.publishedAt` is when it was uploaded, which is
+          // a different day for a scheduled premiere. The entry wins.
+          new Map((response.items ?? []).flatMap((item) => {
+            const videoId = item.contentDetails?.videoId;
+            const publishedAt = item.contentDetails?.videoPublishedAt;
+            return videoId && publishedAt ? [[videoId, publishedAt] as const] : [];
+          })),
         );
         // Which video ids are already songs, in ONE query per page. The first
         // version asked per upload, so walking a 5,000-upload channel cost
@@ -441,7 +448,6 @@ export class YoutubeSyncService {
           // import, and nothing to say about it beyond the count.
           if (!info || info.unavailable) {
             totals.skipped += 1;
-            consecutiveUnclear += 1;
             continue;
           }
 
@@ -451,6 +457,7 @@ export class YoutubeSyncService {
             category: info.categoryId === MUSIC_CATEGORY_ID ? 'Music' : info.categoryId,
             liveBroadcastContent: info.liveBroadcastContent,
             topicChannel: info.topicChannel,
+            publishedAt: info.publishedAt,
           });
 
           // Shapes that are never a release (shorts, live streams, sub-30s
@@ -458,77 +465,67 @@ export class YoutubeSyncService {
           // import a live stream.
           if (verdict.kind === 'rejected') {
             totals.skipped += 1;
+            // Counted apart from shorts and teasers: "not imported yet" and
+            // "never a song" are different answers to "where is the rest of
+            // the catalogue?".
+            if (verdict.reasons.includes('live stream')) totals.awaitingRelease = (totals.awaitingRelease ?? 0) + 1;
             continue;
           }
 
-          const knownSong = known.get(videoId);
           const musical = verdict.kind !== 'unclear';
-          if (musical) {
-            consecutiveUnclear = 0;
-            const outcome = await this.importUpload(artist, {
-              videoId,
-              title: info.title,
-              publishedAt: info.publishedAt,
-              known: knownSong,
-            }, verdict);
-            if (outcome === 'created') totals.created += 1;
-            else totals.updated += 1;
-            continue;
+          if (!musical && !options.force && !filterNoted) {
+            // A run of uploads that do not look like music is reported once, and
+            // then only this channel's unclear uploads are held as review
+            // candidates. The walk itself NEVER stops for it: stopping left the
+            // rest of the channel unimported and kept the resume token on the
+            // same page, so a second sync re-read it and imported nothing. That
+            // is how a real artist ended up with zero videos in the app.
+            filterNoted = true;
+            totals.pausedReason = this.unclearReason();
+            await this.prisma.youtubeChannelSync.update({
+              where: { artistId },
+              data: { lastError: this.unclearReason() },
+            }).catch(() => undefined);
           }
 
-          // Not provably a song. A batch of them in a row is what pointing the
-          // importer at a vlog channel looks like, so the walk pauses (unless
-          // the admin said `force`). Otherwise the upload is brought in as a
-          // **review candidate** (`youtubeImportKind: 'unclear'`): it appears
-          // under Song imports, never in the public catalogue, and a moderator
-          // keeps the real song instead of it being silently missing.
-          totals.skipped += 1;
-          consecutiveUnclear += 1;
-          if (!options.force && consecutiveUnclear >= UNCLEAR_PAUSE_THRESHOLD) {
-            paused = true;
-            break;
-          }
           const outcome = await this.importUpload(artist, {
             videoId,
             title: info.title,
             publishedAt: info.publishedAt,
-            known: knownSong,
-          }, {
+            durationSeconds: info.durationSeconds,
+            known: known.get(videoId),
+            publish: autoPublish && musical,
+          }, musical ? verdict : {
             ...verdict,
             kind: 'unclear',
             reasons: [...verdict.reasons, 'needs review: not confirmed as music'],
           });
-          if (outcome === 'created') totals.created += 1;
+          if (outcome.created) totals.created += 1;
           else totals.updated += 1;
+          if (outcome.published) publishedCount += 1;
+          if (!musical) totals.skipped += 1;
         }
 
         // Save the walk's position before anything else can fail, so a quota
-        // error on the NEXT page does not throw away this one. A paused walk
-        // keeps the token of the page it just read, so "Import every upload"
-        // resumes exactly where it stopped instead of starting over.
-        totals.pages = page;
-        if (paused) {
-          pageToken = pageToken ?? undefined;
-        } else if (!response.nextPageToken) {
+        // error on the NEXT page does not throw away this one.
+        totals.pages = (totals.pages ?? 0) + 1;
+        if (!response.nextPageToken) {
           completed = true;
           pageToken = undefined;
         } else {
           pageToken = response.nextPageToken;
         }
-        const scanned = totals.scanned;
         await this.prisma.youtubeChannelSync.update({
           where: { artistId },
           data: {
             initialImportComplete: completed,
             nextPageToken: completed ? null : pageToken ?? null,
             lastSyncAt: new Date(),
-            lastScanned: scanned,
+            lastScanned: totals.scanned,
             lastCreated: totals.created,
-            ...(paused ? { pausedByFilter: true } : {}),
+            pausedByFilter: filterNoted,
           },
         });
-
-        if (paused) break;
       } while (page < maxPages);
 
       totals.complete = completed;
@@ -546,20 +543,53 @@ export class YoutubeSyncService {
     const summary = await this.channelSummary(artistId);
     totals.drafts = summary.drafts;
     totals.published = summary.published;
+    totals.pagesThisPass = totals.pages ?? 0;
     totals.pages = totals.pages ?? 1;
-    totals.pagesThisPass = totals.pagesThisPass ?? 0;
 
-    if (paused) {
-      totals.pausedReason = this.pausedReason();
-      await this.prisma.youtubeChannelSync.update({
-        where: { artistId },
-        data: {
-          lastError: `Paused after ${UNCLEAR_PAUSE_THRESHOLD} uploads in a row looked non-musical. Use "Import every upload" to override.`,
-        },
-      }).catch(() => undefined);
-    }
+    // One request to the web app, not one per song: it drops the cached
+    // catalogue pages so the imported songs are on the artist page and /songs
+    // the next time anyone loads them.
+    if (publishedCount > 0) await this.revalidateCatalogue(artist.slug);
     if (failure) totals.error = failure;
     return totals;
+  }
+
+  /**
+   * Tell the web app to re-render cached catalogue pages.
+   *
+   * Next.js caches the artist page, /songs and the home shelves for 2–5 minutes.
+   * Without this, a finished import still shows "no songs yet" until an
+   * unrelated rebuild. Best effort: the API never fails an import because the
+   * web app is down, and `npm run stack:up`/a revalidation path still heal it.
+   */
+  /** Public entry point for the admin's "Publish song" action. */
+  revalidateCatalogueNow(artistSlug?: string): Promise<void> {
+    return this.revalidateCatalogue(artistSlug);
+  }
+
+  private async revalidateCatalogue(artistSlug?: string): Promise<void> {
+    // Inside the compose network NEXT_PUBLIC_SITE_URL is the user's browser
+    // origin (localhost:3000), and from the api container "localhost" is the
+    // api itself — so the fallback below is used unless WEB_INTERNAL_URL is set.
+    // The dev and production compose files set it to http://web:3000.
+    const base = (process.env.WEB_INTERNAL_URL || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '');
+    if (!base) return;
+    const paths = ['/', '/songs', '/artists', ...(artistSlug ? [`/artists/${artistSlug}`] : [])];
+    try {
+      await fetch(`${base}/api/revalidate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ paths }),
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch {
+      this.log.debug('Could not revalidate the web catalogue (web app not reachable)');
+    }
+  }
+
+  /** Imported YouTube songs become public songs unless YOUTUBE_AUTO_PUBLISH=false. */
+  autoPublishEnabled(): boolean {
+    return process.env.YOUTUBE_AUTO_PUBLISH !== 'false';
   }
 
   /** Periodic cycle over every sync-enabled artist. Bounded per artist. */
@@ -582,7 +612,10 @@ export class YoutubeSyncService {
     let created = 0;
     for (const artist of artists) {
       try {
-        const result = await this.syncArtistNow(artist.id, { pages: WORKER_PAGES_PER_PASS });
+        const pages = Number(process.env.YOUTUBE_WORKER_PAGES);
+        const result = await this.syncArtistNow(artist.id, {
+          pages: Number.isFinite(pages) && pages > 0 ? pages : WORKER_PAGES_DEFAULT,
+        });
         scanned += result.scanned;
         created += result.created;
       } catch (error) {
@@ -605,12 +638,15 @@ export class YoutubeSyncService {
       videoId: string;
       title: string;
       publishedAt: string | null;
-      categoryId?: string;
+      /** Song length, when YouTube reported one. Used for the player's queue. */
+      durationSeconds?: number | null;
       /** State read in the page's batched lookup; `undefined` = look it up. */
       known?: { id: string; artistIds: string[] } | null;
+      /** Publish straight into the catalogue (music uploads, auto-publish on). */
+      publish?: boolean;
     },
     verdict: ClassifiedUpload,
-  ): Promise<'created' | 'updated'> {
+  ): Promise<{ created: boolean; published: boolean }> {
     const existing = upload.known !== undefined
       ? upload.known && { id: upload.known.id, artists: upload.known.artistIds.map((artistId) => ({ artistId })) }
       : await this.prisma.song.findUnique({
@@ -618,14 +654,26 @@ export class YoutubeSyncService {
         select: { id: true, artists: { select: { artistId: true } } },
       });
 
+    const releaseDate = upload.publishedAt ? new Date(upload.publishedAt) : null;
+    const durationMs = upload.durationSeconds && upload.durationSeconds > 0 ? upload.durationSeconds * 1_000 : null;
+
     if (existing) {
       if (!existing.artists.some((credit) => credit.artistId === artist.id)) {
         await this.prisma.songArtist.create({ data: { songId: existing.id, artistId: artist.id, isPrimary: false, position: existing.artists.length } });
       }
-      return 'updated';
+      // A song that came in earlier as a draft (auto-publish off, or an
+      // earlier run) is promoted the next time the channel is read, so
+      // switching the setting on does not need a manual pass over /admin.
+      if (upload.publish) {
+        const promoted = await this.prisma.song.updateMany({
+          where: { id: existing.id, status: { in: ['draft', 'pending'] } },
+          data: { status: 'published', ...(durationMs ? { durationMs } : {}) },
+        });
+        return { created: false, published: promoted.count > 0 };
+      }
+      return { created: false, published: false };
     }
 
-    const releaseDate = upload.publishedAt ? new Date(upload.publishedAt) : null;
     await this.prisma.song.create({
       data: {
         slug: await this.uniqueSlug(upload.title, artist.slug, upload.videoId),
@@ -633,7 +681,9 @@ export class YoutubeSyncService {
         youtubeVideoId: upload.videoId,
         language: 'mixed',
         releaseDate: releaseDate && Number.isFinite(releaseDate.getTime()) ? releaseDate : null,
-        status: 'draft',
+        durationMs,
+        // Only an upload that must be checked by a human stays a draft.
+        status: upload.publish ? 'published' : 'draft',
         youtubeImported: true,
         youtubeMetadataRefreshedAt: new Date(),
         youtubeImportKind: verdict.kind,
@@ -641,20 +691,23 @@ export class YoutubeSyncService {
         artists: { create: [{ artistId: artist.id, isPrimary: true, position: 0 }] },
       },
     });
-    return 'created';
+    return { created: true, published: Boolean(upload.publish) };
   }
 
   /**
    * The channel's upload count, read once before the walk.
    *
-   * Returns the first page's `nextPageToken` too, so this costs the same single
-   * call the loop would have made anyway.
+   * It is a safety bound on the walk, not a cursor: the walk's position is the
+   * `nextPageToken` saved by the previous page. This call used to return a page
+   * token too, which was the *resume* token echoed back and therefore undefined
+   * on every first pass — so a pass that stopped on page 30 of 40 re-read pages
+   * 1…30 on every later sync instead of resuming where it left off.
    */
   private async uploadsTotal(
     playlistId: string,
     resumeToken: string | undefined,
     key: string,
-  ): Promise<{ total: number | null; firstPageToken: string | undefined }> {
+  ): Promise<{ total: number | null }> {
     try {
       const response = await this.youtubeGet<YouTubeUploadsResponse>('playlistItems', {
         part: 'contentDetails',
@@ -664,14 +717,11 @@ export class YoutubeSyncService {
         key,
       });
       const total = Number(response.pageInfo?.totalResults);
-      return {
-        total: Number.isFinite(total) && total > 0 ? total : null,
-        firstPageToken: resumeToken ?? undefined,
-      };
+      return { total: Number.isFinite(total) && total > 0 ? total : null };
     } catch {
       // The count is a safety bound, not the import: if it cannot be read, walk
       // the channel the old way rather than refusing to import anything.
-      return { total: null, firstPageToken: resumeToken };
+      return { total: null };
     }
   }
 
@@ -701,7 +751,11 @@ export class YoutubeSyncService {
    * whole walk of a 1,000-upload channel is ~42 units — well inside the daily
    * allocation — instead of ~1,000.
    */
-  private async videoInfoBatch(videoIds: string[], key: string): Promise<Map<string, VideoInfo>> {
+  private async videoInfoBatch(
+    videoIds: string[],
+    key: string,
+    publishedAtById: ReadonlyMap<string, string> = new Map(),
+  ): Promise<Map<string, VideoInfo>> {
     const info = new Map<string, VideoInfo>();
     for (let start = 0; start < videoIds.length; start += VIDEO_BATCH_SIZE) {
       const batch = videoIds.slice(start, start + VIDEO_BATCH_SIZE);
@@ -719,7 +773,7 @@ export class YoutubeSyncService {
           // which carry releases and nothing else.
           topicChannel: / - topic$/i.test(video.snippet?.channelTitle ?? ''),
           unavailable: false,
-          publishedAt: video.snippet?.publishedAt ?? null,
+          publishedAt: publishedAtById.get(video.id) ?? video.snippet?.publishedAt ?? null,
         });
       }
     }
@@ -751,15 +805,15 @@ export class YoutubeSyncService {
 
   // --- Helpers ---------------------------------------------------------------
 
-  private pausedReason() {
-    return 'This channel has a run of uploads that do not look like music, so the import paused. Use "Import every upload" to bring them in as drafts anyway.';
+  private unclearReason() {
+    return `Some uploads on this channel do not look like music (interviews, live sets, teasers). They were imported as drafts under Song imports; the rest of the channel was read normally. Use "Import every upload" to add them too.`;
   }
 
   private requireKey(action = 'YouTube channel verification') {
     const key = process.env.YOUTUBE_API_KEY;
     if (!key) {
       throw new ServiceUnavailableException(
-        `${action} needs a YouTube Data API key. Set YOUTUBE_API_KEY in infra/.env and restart the API.`,
+        `${action} needs a YouTube Data API key. Set YOUTUBE_API_KEY in the repo-root .env and re-create the api container (npm run dev:stack:restart).`,
       );
     }
     return key;

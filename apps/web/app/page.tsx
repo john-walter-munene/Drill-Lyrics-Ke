@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getHomeFeeds, listSongs } from '../api';
+import { getHomeFeeds } from '../api';
 import { pageMetadata } from '../lib/seo';
 import SongList from './songs/SongList';
 
@@ -9,6 +9,12 @@ export const metadata = pageMetadata({
     'The home of Kenyan drill. Read the bars while the music plays — synchronized lyrics, Sheng annotations, artists, DJs, podcasts and events.',
   path: '/',
 });
+
+/**
+ * Short, on purpose. The "Start here" shelf is drawn at random, and a page
+ * cached until the next deploy served the same six songs to everyone.
+ */
+export const revalidate = 60;
 
 const SECTIONS = [
   { href: '/songs', title: 'Songs', blurb: 'Browse the catalogue and follow the bars.' },
@@ -20,10 +26,11 @@ const SECTIONS = [
 ];
 
 export default async function HomePage() {
-  // One feed request plus the catalogue: the featured list is the catalogue's
-  // own order so it never disagrees with /songs.
-  const [catalogue, feeds] = await Promise.all([listSongs({ page: 1 }, 0), getHomeFeeds()]);
-  const featuredSongs = catalogue.items.slice(0, 6);
+  // One feed request for the shelves. The "Start here" list is the random one:
+  // a visitor should land on different songs each visit, drawn from the whole
+  // catalogue rather than the newest six.
+  const feeds = await getHomeFeeds();
+  const featuredSongs = feeds.randomSongs;
 
   // Only show a shelf that has something a visitor can act on, and never repeat
   // the featured list directly beneath itself.
@@ -59,7 +66,10 @@ export default async function HomePage() {
           <div>
             <p className="badge">Start here</p>
             <h2 id="start-listening-title">Choose a song and press play.</h2>
-            <p className="muted">Playback starts here. Your queue follows the order shown, with previous and next controls in the player.</p>
+            <p className="muted">
+              A fresh handful from across the catalogue, and it keeps playing wherever you go on the site.
+              Your queue follows the order shown.
+            </p>
           </div>
           <Link href="/songs" className="btn btn--sm">Browse all songs</Link>
         </div>

@@ -57,42 +57,59 @@ export interface PlayerControls {
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
+/** One key for the whole player: the Listen/Watch choice survives a new track. */
+const MODE_KEY = 'drill-lyrics-mode';
+/** The loaded track and queue, so a full page load keeps the session's player. */
+const SESSION_KEY = 'drill-lyrics-session';
+
 export default function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [track, setTrack] = useState<PlayerTrack | null>(null);
   const [queue, setQueue] = useState<PlayerTrack[]>([]);
   const [time, setTime] = useState({ currentMs: 0, durationMs: 0 });
   const [playbackState, setPlaybackState] = useState<PlaybackState>('unstarted');
   const [controls, setControls] = useState<PlayerControls | null>(null);
-  const [modesBySong, setModesBySong] = useState<Record<string, PlaybackMode>>({});
+  const [playbackMode, setPlaybackModeState] = useState<PlaybackMode>('watch');
   const [shuffle, setShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
   const [queueOpen, setQueueOpen] = useState(false);
   const [playHistory, setPlayHistory] = useState<string[]>([]);
 
-  const playbackMode = track ? modesBySong[track.slug] ?? 'watch' : 'watch';
+  // Restore the session's track and queue after a full page load, cued rather
+  // than playing. Runs once, before any song page can register its own track.
   useEffect(() => {
-    if (!track) return;
     try {
-      const stored = window.localStorage.getItem(`drill-lyrics-mode:${track.slug}`);
-      if (stored === 'listen' || stored === 'watch') {
-        setModesBySong((previous) => previous[track.slug] === stored
-          ? previous
-          : { ...previous, [track.slug]: stored });
-      }
+      const raw = window.sessionStorage.getItem(SESSION_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { track?: PlayerTrack; queue?: PlayerTrack[] };
+      if (!saved.track?.slug) return;
+      setTrack((current) => current ?? saved.track!);
+      setQueue((current) => (current.length ? current : saved.queue ?? [saved.track!]));
+      setPlaybackState(saved.track.youtubeVideoId ? 'unstarted' : 'error');
+    } catch {
+      // A malformed or unreadable entry is simply ignored.
+    }
+  }, []);
+
+  // Listen/Watch is a preference for the whole player, not a fact about one
+  // song. It used to be stored per slug, so picking a new track silently fell
+  // back to Watch — the choice vanished exactly when a listener moved on.
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(MODE_KEY);
+      if (stored === 'listen' || stored === 'watch') setPlaybackModeState(stored);
     } catch {
       // Keep Watch as the default when browser storage is unavailable.
     }
-  }, [track?.slug]);
+  }, []);
 
   const setPlaybackMode = useCallback((mode: PlaybackMode) => {
-    if (!track) return;
-    setModesBySong((previous) => ({ ...previous, [track.slug]: mode }));
+    setPlaybackModeState(mode);
     try {
-      window.localStorage.setItem(`drill-lyrics-mode:${track.slug}`, mode);
+      window.localStorage.setItem(MODE_KEY, mode);
     } catch {
       // Mode switching remains available when browser storage is unavailable.
     }
-  }, [track]);
+  }, []);
 
   const play = useCallback((next: PlayerTrack, nextQueue?: PlayerTrack[], autoplay = false) => {
     const selectedQueue = nextQueue?.length
@@ -106,6 +123,22 @@ export default function PlayerProvider({ children }: { children: React.ReactNode
     if (next.youtubeVideoId) controls?.load(next.youtubeVideoId, autoplay);
     else controls?.pause();
   }, [controls, queue]);
+
+  // Remember what is loaded, so a full page load does not silently lose the
+  // session's track and queue. A fresh track is NOT autoplayed on restore: a
+  // browser blocks that, and a page load is not a "play" gesture. The player
+  // restores the song cued at the front, one click from resuming.
+  useEffect(() => {
+    if (!track) return;
+    try {
+      window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+        track: { slug: track.slug, title: track.title, artistNames: track.artistNames, youtubeVideoId: track.youtubeVideoId },
+        queue,
+      }));
+    } catch {
+      // Private mode: playback just will not survive a reload.
+    }
+  }, [track, queue]);
   const seekTo = useCallback((ms: number) => controls?.seekTo(ms), [controls]);
   const playPause = useCallback(() => {
     if (!track?.youtubeVideoId) return;

@@ -39,6 +39,12 @@ export interface UploadMetadata {
   liveBroadcastContent?: 'none' | 'live' | 'upcoming' | null;
   /** Present when the upload belongs to a Topic channel / auto-generated art track. */
   topicChannel?: boolean;
+  /**
+   * When the upload was published. For a scheduled premiere this is the day it
+   * went public, which is what distinguishes a released track from one that is
+   * still waiting.
+   */
+  publishedAt?: string | null;
 }
 
 export const SHORT_MAX_SECONDS = 90;
@@ -87,8 +93,20 @@ export function classifyUpload(meta: UploadMetadata): ClassifiedUpload {
 
   // --- Hard rejections: shapes YouTube itself treats as not-a-release. -------
 
-  if (meta.liveBroadcastContent === 'live' || meta.liveBroadcastContent === 'upcoming') {
+  if (meta.liveBroadcastContent === 'live') {
     return { kind: 'rejected', score: 0, reasons: ['live stream'] };
+  }
+  if (meta.liveBroadcastContent === 'upcoming') {
+    // A scheduled premiere or stream. It is a real upload that simply has not
+    // gone live yet, so it is reported separately from clips and shorts — and
+    // when a `publishedAt` is known, that date settles it: YouTube keeps
+    // `liveBroadcastContent: 'upcoming'` on a premiere whose scheduled time has
+    // already passed, which is how a released song stayed out of the catalogue.
+    const premieredAt = meta.publishedAt ? Date.parse(meta.publishedAt) : Number.NaN;
+    if (!Number.isFinite(premieredAt) || premieredAt > Date.now()) {
+      return { kind: 'rejected', score: 0, reasons: ['live stream'] };
+    }
+    reasons.push('scheduled upload, now published');
   }
   if (/#shorts?\b/i.test(title)) {
     return { kind: 'rejected', score: 0, reasons: ['YouTube Short'] };

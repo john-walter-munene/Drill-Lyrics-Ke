@@ -138,9 +138,15 @@ export class ArtistsService {
   async list(query: ListArtistsQuery) {
     const page = this.pageNumber(query.page);
     const pageSize = 20;
+    // The directory lists artists that have a YouTube channel too. Requiring a
+    // published song hid every artist in the seconds between "added" and "first
+    // song imported" — and for good on a channel whose import had not run yet.
     const where = {
       ...(query.q?.trim() ? { name: { contains: query.q.trim(), mode: 'insensitive' as const } } : {}),
-      songs: { some: { song: { status: 'published' as const } } },
+      OR: [
+        { songs: { some: { song: { status: 'published' as const } } } },
+        { youtubeChannelId: { not: null } },
+      ],
     };
     const [total, artists] = await Promise.all([
       this.prisma.artist.count({ where }),
@@ -182,7 +188,9 @@ export class ArtistsService {
         _count: { select: { songs: { where: { song: { status: 'published' } } } } },
       },
     });
-    if (!artist || artist._count.songs === 0) throw new NotFoundException('Artist not found');
+    // A channel-backed artist has a page the moment it is added, even before
+    // the import has produced its first song: the page then says so.
+    if (!artist || (artist._count.songs === 0 && !artist.youtubeChannelId)) throw new NotFoundException('Artist not found');
     return {
       id: artist.id,
       slug: artist.slug,

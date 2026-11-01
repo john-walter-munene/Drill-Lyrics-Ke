@@ -147,7 +147,10 @@ then Nest's route table and `DrillKe API listening on :4000`.
 ## Ports and configuration
 
 **There is one environment file: `.env` at the repo root.** Both stacks and host
-development read it. There is no `infra/.env` and no `.env.local` any more.
+development read it. Do not create `infra/.env`, `.env.local`, or per-app env
+files — none of them is read, and a value set there is silently ignored. Compose
+passes the same file to both containers, so every key in it reaches the API and
+the web app without being repeated in a compose file.
 
 ```powershell
 Copy-Item .env.example .env     # once per checkout; .env is git-ignored
@@ -176,7 +179,9 @@ Key groups (full annotated list in [`.env.example`](../.env.example)):
 | `SEED_ADMIN_RESET_PASSWORD` | `true` | Re-applies the password and admin role on boot. Set `false` after setup |
 | `SEED_ON_START` | `true` | Set `false` to stop re-seeding on every restart |
 | `YOUTUBE_API_KEY` | *(empty)* | **Required to add an artist from a YouTube link.** See [YouTube import](#youtube-import) |
+| `YOUTUBE_AUTO_PUBLISH` | `true` | Imported **music** uploads go straight into the public catalogue (`false` = leave them as drafts to review) |
 | `EMBED_WORKER` | `false` | Periodic new-upload sync inside the API process |
+| `YOUTUBE_WORKER_PAGES` | *(all)* | Optional cap, in pages of 50, on one periodic cycle per channel |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:4000` | Baked in at **build** time |
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` | Baked in at **build** time |
 
@@ -239,30 +244,44 @@ resolves the channel and lists its newest uploads without creating anything.
 
 ### What the import does
 
-- Walks the channel's uploads playlist from newest to oldest, uploading every
-  page's position as it goes. A failure part-way (quota, network) keeps
-  everything already imported and resumes from the page that failed on the
-  next sync.
+One link is the whole catalogue, and it is visible when the request returns.
+
+- Walks the channel's uploads playlist from newest to oldest, saving the walk's
+  position after every page. A failure part-way (quota, network) keeps
+  everything already imported and the next sync resumes at the page that failed.
 - Songs are matched by `youtubeVideoId`, so re-running a sync never duplicates
   a song and the command is safe to repeat.
-- Uploads that carry YouTube's **Music** category, or that classify as a song
-  from duration and wording, become `draft` songs in the catalogue's review
-  queue (`Song imports` in `/admin`).
+- Uploads that carry YouTube's **Music** category, are topic-channel tracks, or
+  classify as a song from duration and wording are imported **and published**:
+  they appear on the artist page, on `/songs` and on the home shelves
+  (`YOUTUBE_AUTO_PUBLISH=false` keeps them as drafts instead).
 - Anything not clearly music (a vlog, a caption-shaped event post, a festival
   or live-set recording) is still imported, as an `unclear` **review
-  candidate**, and counted as skipped. It never enters the public catalogue on
-  its own. Shorts, live streams and sub-30-second clips are not imported.
-- A run of 25 non-music uploads in a row pauses the walk: that is what pointing
-  the importer at a non-music channel looks like. **Import every upload**
-  (`importAll`) overrides the pause for that channel.
+  candidate** under `/admin` → Song imports, and counted as skipped. It never
+  enters the public catalogue on its own. Shorts, live streams and sub-30-second
+  clips are not imported.
+- A **scheduled premiere** is handled by date, not by YouTube's live flag: once
+  its publish date has passed it is a released song and is imported. One still
+  waiting for its premiere is skipped and counted in `awaitingRelease`; the next
+  sync picks it up.
+- A run of non-music uploads does **not** stop the walk. It used to, which left
+  the rest of the channel unimported and kept re-reading the same page; the
+  filter now only decides what is published, and **Import every upload**
+  (`importAll`) adds the unclear uploads too.
+- When something is published, the API tells the web app to drop its cached
+  catalogue pages (`POST /api/revalidate`), so new songs show up immediately
+  instead of after the 2–5 minute page cache.
+- An artist's page exists from the moment they are added, even before the first
+  song arrives — the importer and the directory no longer hide it.
 
 ### Buttons in /admin → Channels
 
 | Button | Does |
 |---|---|
-| **Sync whole channel** | Continue an unfinished walk from where it stopped. |
-| **Re-check whole channel** | Start again from the newest upload (`restart: true`). Correct after an earlier, now-fixed import that finished without importing anything. |
-| **Import every upload** | Shown when the walk paused. Overrides the non-music filter. |
+| **Sync whole channel** | Continue an unfinished walk from its saved page, or re-read a finished one for new uploads. |
+| **Re-check whole channel** | Start again from the newest upload (`restart: true`). Use it after fixing an import problem: songs are matched by video id, so nothing is duplicated. |
+| **Import every upload** | Shown when a channel had unclear uploads. Also imports those as review candidates. Never imports a short or a live stream. |
+| **See videos in the app** | Lists everything imported for that channel — published included — so "did the whole catalogue come in?" has an answer. |
 | **Review N drafts** | Jumps to the imported songs waiting for review. |
 
 Only one sync per channel can run at a time. A second request answers
@@ -279,11 +298,13 @@ pressing **Sync whole channel** is the only way to see new uploads.
 
 | Symptom | Cause / fix |
 |---|---|
-| `YouTube channel verification needs a YouTube Data API key` | `YOUTUBE_API_KEY` is empty in the container. Set it in `.env`, `npm run dev:stack:restart`, re-check with `printenv`. |
+| `YouTube channel verification needs a YouTube Data API key` | `YOUTUBE_API_KEY` is empty in the container. Set it in the repo-root `.env`, `npm run dev:stack:restart`, re-check with `printenv`. |
 | `YouTube rejected the API key or its quota is exhausted` | Key wrong, API not enabled on the project, or the daily quota is spent. |
 | Import finishes with `0 new songs` | Every upload was already imported, or the channel is not a music channel and the filter rejected the rest. Try **Import every upload**. |
 | `This channel is already being imported` | A sync is still running. Watch it with `npm run dev:stack:logs`. |
-| Songs showed up, but none are public | Imports are **drafts** by design. Publish them from `/admin` → Song imports. |
+| Songs showed up, but none are public | Either `YOUTUBE_AUTO_PUBLISH=false`, or the uploads were not confirmed as music (they are drafts by design). Publish them from `/admin` → Song imports. |
+| One song of a release is missing | If it premiered as a scheduled video, it is imported once its publish date has passed. Press **Re-check whole channel**; the import summary reports anything still awaiting release. |
+| Artist added, but nothing in the app | Open `/admin` → Artists & sync → **See videos in the app**: an empty list means nothing was imported (check `lastError`). The public page shows drafts only once published. |
 
 ---
 

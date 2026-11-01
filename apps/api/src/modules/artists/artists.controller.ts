@@ -20,7 +20,8 @@ class SuggestArtistDto {
 }
 
 /**
- * Public artist directory and profiles. Published songs only — see
+ * Public artist directory and profiles. Song lists are published-only; an
+ * artist page itself exists as soon as the artist has a YouTube channel — see
  * docs/api.md §Artists.
  */
 @Controller('artists')

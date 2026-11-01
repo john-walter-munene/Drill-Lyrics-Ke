@@ -1020,7 +1020,7 @@ cd drillke
 pnpm install
 
 # 3. Create your environment file
-cp .env.example .env.local
+cp .env.example .env
 
 # 4. Start a local database (Docker example)
 docker run --name drillke-db -e POSTGRES_PASSWORD=postgres \
@@ -1042,7 +1042,10 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Environment Variables
 
-Copy `.env.example` to `.env.local` and fill in the values. **Never commit real secrets.**
+Copy `.env.example` to `.env` at the repo root and fill in the values. **Never
+commit real secrets.** `.env` is the only environment file: the Docker stacks,
+host `npm run dev` and the API all read it. An `.env.local` is not read here and
+owes nothing (Next.js would even let one shadow `.env`).
 
 | Variable | Required | Description |
 | --- | --- | --- |
@@ -1050,13 +1053,14 @@ Copy `.env.example` to `.env.local` and fill in the values. **Never commit real 
 | `NEXT_PUBLIC_SITE_URL` | Yes | Public base URL (for canonical links and sitemap) |
 | `JWT_SECRET` | Yes in production | Strong (≥32 characters) secret used to sign JWTs |
 | `YOUTUBE_API_KEY` | Optional | YouTube Data API key (artist and video import) |
+| `YOUTUBE_AUTO_PUBLISH` | Optional | `true` (default) publishes imported music; `false` leaves it as drafts |
 | `SEED_ADMIN_EMAIL` | Yes for initial admin seed | Email for the seeded administrator |
 | `SEED_ADMIN_PASSWORD` | Yes for initial admin seed | Password for the seeded administrator |
-| `RATE_LIMIT_REDIS_URL` | Optional | Store for rate limiting at scale |
 | `MAIL_PROVIDER` | Optional | `mock` (default, logs messages) or `smtp` |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | With `MAIL_PROVIDER=smtp` | SMTP relay settings; validated at boot |
 | `MAIL_FROM` | With `MAIL_PROVIDER=smtp` | Envelope sender, e.g. `DrillKe <no-reply@drillke.com>` |
-| `NEXT_PUBLIC_ANALYTICS_ID` | Optional | Privacy-respecting analytics identifier |
+
+The annotated list of every setting is [`.env.example`](../.env.example).
 
 Variables prefixed `NEXT_PUBLIC_` are exposed to the browser. Do not put secrets in them.
 

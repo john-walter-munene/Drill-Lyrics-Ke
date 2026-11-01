@@ -33,11 +33,18 @@
 #   (`drill-lyrics-key`) or any other checkout.
 #
 # CONFIGURATION
-#   One env file: `../../.env` at the repo root (copy it from .env.example).
-#   The `env_file` below is what actually feeds the api container, so it works
-#   the same whether you run compose via `npm run dev:stack` or by hand with
-#   `-f infra/docker-compose.dev.yml`. The `${VAR:-default}` lines still read
-#   the same file, because the root package.json sits beside it.
+#   One env file: `../.env` at the repo root (copy it from .env.example).
+#   Compose reads it as the project dotenv file (the root package.json sits next
+#   to it) and `env_file` passes the SAME file into the containers, so every key
+#   present there reaches both the api and the web service — including keys this
+#   file does not name explicitly.
+#
+#   The `environment:` blocks below set three kinds of value only:
+#     * what compose knows and .env must not (DATABASE_URL to localhost INSIDE
+#       the api container, API_INTERNAL_URL=http://api:4000 on the network);
+#     * container topology (PORT, PATH, NODE_ENV);
+#     * `${VAR:-default}` reads, so a fresh checkout with no .env still starts.
+#   Anything else comes from .env via env_file. Do not add a duplicate here.
 #
 # CHANGED A VALUE?  `npm run dev:stack:restart` — environment is fixed at
 # container creation, so a restart of the process is not enough.
@@ -136,30 +143,15 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-drillke}
       POSTGRES_USER: ${POSTGRES_USER:-drillke}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-drillke}
-      # Migrations are applied once by the entrypoint on boot; the `migrate`
-      # job is kept as a convenience for re-seeding without a restart.
-      SEED_ON_START: ${SEED_ON_START:-true}
-      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@drillke.local}
-      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-change-me-now}
-      # Without this, an existing admin row is never updated and a password
-      # changed in infra/.env is silently ignored. In dev the operator owns
-      # the database, so following the env file IS the intended reset.
-      SEED_ADMIN_RESET_PASSWORD: ${SEED_ADMIN_RESET_PASSWORD:-true}
-      JWT_SECRET: ${JWT_SECRET:-local-dev-only-secret-change-before-deploying-0000}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
-      EMBED_WORKER: ${EMBED_WORKER:-false}
-      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
-      # Mail: `mock` logs instead of sending. Set MAIL_PROVIDER=smtp plus the
-      # SMTP_* / MAIL_FROM values in infra/.env to send for real.
-      MAIL_PROVIDER: ${MAIL_PROVIDER:-mock}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      MAIL_FROM: ${MAIL_FROM:-DrillKe <no-reply@drillke.local>}
-      # Password-reset links and account emails point at the public site.
-      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      # The web app on the compose network, for the cache-purge call after an
+      # import. NEXT_PUBLIC_SITE_URL is the BROWSER origin (localhost:3000),
+      # which from inside this container would be the api itself.
+      WEB_INTERNAL_URL: http://web:3000
+      # Everything else (SEED_*, JWT_SECRET, CORS_ORIGINS, LOG_LEVEL, the
+      # THROTTLE_* budget, YOUTUBE_*, MAIL_*/SMTP_*, NEXT_PUBLIC_*) comes from
+      # the root .env through `env_file` above. Repeating a key here would
+      # shadow the .env value with this file's default — which is how a
+      # SEED_ADMIN_RESET_PASSWORD=false in .env was silently overridden.
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     ports:
@@ -190,8 +182,9 @@ services:
       NODE_ENV: development
       NEXT_TELEMETRY_DISABLED: "1"
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
-      API_INTERNAL_URL: http://api:4000
       NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      # Docker DNS for server components; the browser uses NEXT_PUBLIC_API_URL.
+      API_INTERNAL_URL: http://api:4000
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     ports:

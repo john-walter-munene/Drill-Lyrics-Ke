@@ -213,6 +213,6 @@ export class AdminController {
   @Get('acquisition') @Roles('moderator') acquisition() { return this.admin.acquisitionStatus(); }
   /** Preview a channel without adding it: does the link resolve, how big is it? */
   @Post('acquisition/preview') @Roles('moderator') previewArtist(@Body() dto: AddArtistDto) { return this.admin.previewChannel(dto.youtubeChannel); }
-  @Get('songs/drafts') @Roles('moderator') songDrafts(@Query('artistId') artistId?: string) { return this.admin.songDrafts({ artistId }); }
+  @Get('songs/drafts') @Roles('moderator') songDrafts(@Query('artistId') artistId?: string, @Query('all') all?: string) { return this.admin.songDrafts({ artistId, all: all === 'true' }); }
   @Post('songs/:id/publish') @Roles('moderator') publishSong(@Param('id') id: string, @CurrentUser() user: SessionUser) { return this.admin.publishSong(id, user.id); }
 }

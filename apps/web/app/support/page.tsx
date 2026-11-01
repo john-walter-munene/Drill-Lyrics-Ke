@@ -1,4 +1,3 @@
-
 import Link from "next/link";
 import { pageMetadata } from "../../lib/seo";
 
@@ -9,70 +8,76 @@ export const metadata = pageMetadata({
   path: "/support",
 });
 
+const BMC_URL = "https://buymeacoffee.com/Munene254_";
+
+const buttonClass = "about-page__button";
+
 const principles = [
   {
     id: "purpose",
     symbol: "♪",
-    title: "Our purpose",
+    title: "What it's for",
     text: "Give Kenyan drill a home where its music, lyrics, artists, and stories can be discovered and documented.",
   },
   {
-    id: "approach",
+    id: "funding",
     symbol: "≋",
-    title: "Our approach",
-    text: "Connect music discovery with lyrics, synchronized playback, and explanations of the language and references behind the bars.",
+    title: "How it's funded",
+    text: "Drill Lyrics KE is independent and free to use. There are no paywalls, and the project runs on community support.",
   },
   {
-    id: "community",
+    id: "involved",
     symbol: "◎",
-    title: "Our community",
-    text: "Build a shared music library through contributions from listeners, artists, and people who care about the Kenyan drill scene.",
+    title: "How to get involved",
+    text: "Chip in with a coffee, contribute lyrics, or help build the platform. Every bit keeps the scene documented.",
   },
 ];
 
-const buttonClass =
-  "about-page__button";
-
-export default function AboutPage() {
+export default function SupportPage() {
   return (
-    <main className="about-page container" aria-labelledby="about-heading">
+    <main className="about-page container" aria-labelledby="support-heading">
       <div>
         <header className="about-page__header">
-          <p className="about-page__eyebrow">About the project</p>
+          <p className="about-page__eyebrow">Support the project</p>
 
-          <h1 id="about-heading">
-            The home of Kenyan drill.{" "}
-            <span>One track at a time.</span>
+          <h1 id="support-heading">
+            Help keep it free. <span>Help keep it independent.</span>
           </h1>
 
           <p className="about-page__intro">
             Drill Lyrics KE is an open-source music discovery and lyrics
-            platform built around Kenyan drill. We bring together songs,
-            artists, lyrics, and the culture behind the music to make the
-            scene easier to discover, understand, and experience.
+            platform built around Kenyan drill. It stays free and independent
+            because of people who care about the scene and want to see it
+            documented properly.
           </p>
 
           <p className="muted">
-            Kenyan drill has its own sound, language, stories, and identity.
-            Our goal is to help document that creativity and make it
-            accessible to the people who create it and the people who
-            listen to it.
+            If the project has helped you find a new artist or finally
+            understand a line, here are a few ways to give something back.
           </p>
+
+          <div className="about-page__actions">
+            <a
+              href={BMC_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${buttonClass} about-page__button--primary`}
+            >
+              Buy me a coffee ☕ <span aria-hidden="true">↗</span>
+            </a>
+          </div>
         </header>
 
         <section
           className="about-page__principles"
-          aria-label="Our guiding principles"
+          aria-label="About supporting the project"
         >
           {principles.map((principle) => (
             <article
               className="panel about-page__principle"
               key={principle.id}
             >
-              <span
-                className="about-page__symbol"
-                aria-hidden="true"
-              >
+              <span className="about-page__symbol" aria-hidden="true">
                 {principle.symbol}
               </span>
 
@@ -84,20 +89,12 @@ export default function AboutPage() {
 
         <div className="about-page__columns">
           <section className="panel about-page__section">
-            <h2>Music, lyrics &amp; discovery</h2>
+            <h2>Buy me a coffee</h2>
 
             <p>
-              At the heart of Drill Lyrics KE is a growing catalogue of
-              Kenyan drill music. Listeners can discover songs and artists,
-              explore lyrics, and follow music through an integrated
-              listening experience.
-            </p>
-
-            <p>
-              We want lyrics to be more than blocks of text. Where
-              synchronization is available, listeners can follow the words
-              as a song plays. Annotations can also help explain Sheng,
-              slang, and cultural references that give the music its meaning.
+              A small contribution helps cover hosting and the time it takes
+              to keep the library growing, from adding songs to reviewing
+              community submissions.
             </p>
 
             <p className="muted">
@@ -106,35 +103,32 @@ export default function AboutPage() {
               recordings.
             </p>
 
-            <Link href="/songs" className={buttonClass}>
-              Explore songs <span aria-hidden="true">→</span>
-            </Link>
+            <a
+              href={BMC_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${buttonClass} about-page__button--primary`}
+            >
+              Buy me a coffee <span aria-hidden="true">↗</span>
+            </a>
           </section>
 
           <section className="panel about-page__section">
-            <h2>Trust &amp; community</h2>
+            <h2>Other ways to help</h2>
 
             <p>
-              The library grows through community participation. Listeners
-              can contribute lyrics, suggest corrections, and help improve
-              the information surrounding songs and artists.
-            </p>
-
-            <p>
-              Contributions and imported song suggestions go through
-              editorial review before publication. This helps us maintain
-              quality while giving the community a meaningful role in
-              documenting its music.
+              Not able to chip in financially? Contributing lyrics, suggesting
+              corrections, and sharing the platform with other listeners all
+              make a real difference.
             </p>
 
             <p className="muted">
-              Artists retain their identity and their existing platforms.
-              Drill Lyrics KE exists to support discovery and appreciation,
-              not to replace the people or platforms behind the music.
+              Contributions go through editorial review before publication, so
+              the library stays trustworthy as it grows.
             </p>
 
-            <Link href="/legal/rights" className={buttonClass}>
-              Our rights policy <span aria-hidden="true">→</span>
+            <Link href="/submit" className={buttonClass}>
+              Contribute lyrics <span aria-hidden="true">→</span>
             </Link>
           </section>
         </div>
@@ -173,16 +167,16 @@ export default function AboutPage() {
           className="about-page__links"
           aria-label="Explore Drill Lyrics KE"
         >
-          <Link href="/artists" className="btn btn--primary">
+          <Link href="/songs" className="btn btn--primary">
+            Explore songs
+          </Link>
+
+          <Link href="/artists" className="btn">
             Discover artists
           </Link>
 
-          <Link href="/submit" className="btn">
-            Contribute lyrics
-          </Link>
-
-          <Link href="/support" className="btn">
-            Support the project
+          <Link href="/legal/rights" className="btn">
+            Our rights policy
           </Link>
         </nav>
       </div>

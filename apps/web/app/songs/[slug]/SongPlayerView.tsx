@@ -18,17 +18,22 @@ export default function SongPlayerView({
   lyrics: LyricsPayload | null;
   queue: PlayerTrack[];
 }) {
-  const { play, track, playbackMode } = usePlayer();
+  const { play, track, playbackMode, playbackState } = usePlayer();
 
   useEffect(() => {
+    // Only take over when the page's song is not already the player's track, or
+    // when the player is idle. Re-registering on every visit used to restart the
+    // count of a song that was already playing while the reader navigated.
     if (track?.slug === song.slug) return;
+    const busy = playbackState === 'playing' || playbackState === 'buffering';
+    if (busy && track) return;
     play({
       slug: song.slug,
       title: song.title,
       artistNames: song.artists.map((a) => a.name),
       youtubeVideoId: song.youtubeVideoId,
-    }, queue);
-  }, [play, track?.slug, song.slug, song.title, song.youtubeVideoId, song.artists, queue]);
+    }, queue, false);
+  }, [play, track, song.slug, song.title, song.youtubeVideoId, song.artists, queue, playbackState]);
 
   return (
     <div className={`player-layout${playbackMode === 'listen' ? ' player-layout--listen' : ''}`} style={{ marginTop: '1.5rem' }}>

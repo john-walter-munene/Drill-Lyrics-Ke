@@ -32,7 +32,9 @@ The only phase that matters for market entry.
 - [x] Same-player queue handoff on track end (best effort; no gapless/crossfade guarantee)
 - [x] `GET /api/artists` and artist catalogue reads
 - [x] Guest text lyric submissions tied to a published catalogue song (pending only)
-- [x] Verified-channel YouTube upload import into draft song candidates (requires `YOUTUBE_API_KEY`)
+- [x] Verified-channel YouTube upload import into the catalogue (requires `YOUTUBE_API_KEY`)
+      — music uploads publish (drafts with `YOUTUBE_AUTO_PUBLISH=false`), unclear
+      ones wait for review
 - [x] Unsynchronized fallback state (readable lyrics; no false timing/highlights)
 - [x] Song page SSR + metadata + `MusicRecording` JSON-LD
 - [x] Artist directory, profile pages and linked song catalogue
@@ -51,10 +53,36 @@ gapless playback.
 
 **Next, deliberately deferred (November 2026):** lyrics submission and
 synchronization during playback. The acquisition side is stable enough to commit
-to (a channel imports completely, resumes after a failure, and cannot be
-double-walked), so the next pass starts from a catalogue that actually has songs
-in review. Until then, `/submit` and the moderator timing editor are as described
-above; no known blocking bug is outstanding on either.
+to — a channel imports completely (including scheduled premieres), resumes from
+its saved page after a failure, cannot be double-walked, and its songs appear and
+play on `/songs` and the artist page — so the next pass starts from a catalogue
+that actually has songs in review. Until then, `/submit` and the moderator timing
+editor are as described above; no known blocking bug is outstanding on either.
+
+**Baseline reached (November 2026), verified against the running stack:**
+
+- **Images and containers.** Both images build from the repo root
+  (`docker build -f Dockerfile`, `docker build -f apps/web/Dockerfile`) and
+  `docker compose -f infra/docker-compose.yml up -d --build` brings up `api` and
+  `web` green. The API container owns PostgreSQL and runs migrations + seed on
+  boot.
+- **Catalogue acquisition.** Pasting a channel into `/admin` → *Artists & sync*
+  imports the whole channel; music uploads publish straight to the catalogue,
+  unclear ones become review candidates, shorts and live streams are skipped.
+  Verified on three real channels (125–150 uploads each).
+- **Playback.** Synced songs appear on `/songs`, `/songs?artist=<slug>` and the
+  artist's page, and play through the same persistent player as the seeded songs,
+  including previous/next within the artist's queue.
+- **Lyrics submission → publish.** Guest and signed-in submissions validate
+  server-side, land `pending`, appear in the moderator queue, and an approval
+  publishes an immutable version that `/api/songs/:slug/lyrics` and the song page
+  then serve (annotations included). Verified end to end, plus
+  `e2e/annotation-editor.spec.ts` and `e2e/markdown-submission.spec.ts`.
+
+With that in place the next module is **lyrics synchronization**: the timing
+editor, the shared estimator and the timed-line highlight all exist, and what
+remains is producing timed lyrics at catalogue scale and proving them on real
+devices (the Phase 1 exit criteria).
 
 The annotation editor has an end-to-end test (`e2e/annotation-editor.spec.ts`)
 that drives the real review queue and asserts the annotation renders on the

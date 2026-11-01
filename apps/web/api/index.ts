@@ -300,12 +300,14 @@ export async function listSongs(
  * a home page that queries on every hit is the first thing to fall over.
  */
 export interface HomeFeeds {
+  /** Published songs drawn at random from across the whole catalogue. */
+  randomSongs: Song[];
   newSongs: Song[];
   syncedSongs: Song[];
   emergingArtists: { slug: string; name: string; imageUrl: string | null; publishedSongs: number }[];
 }
 
-const EMPTY_FEEDS: HomeFeeds = { newSongs: [], syncedSongs: [], emergingArtists: [] };
+const EMPTY_FEEDS: HomeFeeds = { randomSongs: [], newSongs: [], syncedSongs: [], emergingArtists: [] };
 
 export async function getHomeFeeds(revalidate = 120): Promise<HomeFeeds> {
   return (await getJson<HomeFeeds>('/api/songs/feeds', revalidate)) ?? EMPTY_FEEDS;

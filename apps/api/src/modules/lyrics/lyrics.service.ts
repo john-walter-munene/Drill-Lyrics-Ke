@@ -12,12 +12,26 @@ export class LyricsService {
     // Validate with the parser that matches the shape of the body, so a Markdown
     // document is checked for frontmatter and annotations and a text body is not
     // rejected for lacking them. The raw body is stored either way.
+    //
+    // The error envelope is built as `{ message, errors }` on purpose. The shared
+    // parsers return a per-field map (`{ body: [...], frontmatter: [...] }`), and
+    // passing that object straight to `UnprocessableEntityException` made Nest
+    // treat it as the response body — so the client got the fields at the TOP
+    // level (`"timestamps": [...]`) under a bare "Unprocessable Entity" and the
+    // documented `errors` array was never sent.
+    const invalid = (errors: Record<string, string[]>) => {
+      const first = Object.values(errors).flat()[0];
+      return new UnprocessableEntityException({
+        message: first ?? 'The lyrics could not be read',
+        errors,
+      });
+    };
     if (looksLikeMarkdownDocument(dto.markdown)) {
       const parsed = parseLyricsDocument(dto.markdown);
-      if (!parsed.ok) throw new UnprocessableEntityException(parsed.errors);
+      if (!parsed.ok) throw invalid(parsed.errors);
     } else {
       const parsed = parseLyricsText(dto.markdown);
-      if (!parsed.ok) throw new UnprocessableEntityException(parsed.errors);
+      if (!parsed.ok) throw invalid(parsed.errors);
     }
 
     const song = await this.prisma.song.findFirst({

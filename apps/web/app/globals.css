@@ -665,6 +665,33 @@ a:hover {
   padding: 1.25rem 1.5rem 0;
 }
 
+/*
+ * Once a track is chosen the player follows the reader: it stays pinned to the
+ * top while the catalogue scrolls under it. The body reserves that height, so
+ * the sticky bar never covers a song title or a Play button.
+ */
+body:has(.player-shell[aria-label]) .persistent-player {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  padding-bottom: 0.5rem;
+  background: linear-gradient(180deg, var(--bg) 78%, color-mix(in srgb, var(--bg) 0%, transparent));
+}
+
+.player-shell--complete .player-shell__layout { align-items: start; }
+
+/* The video is the tallest element in the player; on a laptop the pinned shell
+ * must leave the catalogue visible underneath it. */
+@media (min-width: 821px) {
+  body:has(.player-shell[aria-label]) .player-shell__video { max-height: 42vh; }
+}
+
+@media (max-width: 820px) {
+  body:has(.player-shell[aria-label]) .persistent-player { position: static; }
+  .player-shell__bar { flex-wrap: wrap; }
+  .player-shell__bar-seek { flex-basis: 100%; order: 3; }
+}
+
 .player-shell__video {
   aspect-ratio: 16 / 9;
   min-height: 200px;
@@ -721,6 +748,19 @@ a:hover {
 .player-shell--watch .player-shell__video { max-width: 900px; margin-inline: auto; }
 .player-shell__details { align-content: center; }
 .player-shell__transport { flex: 1 0 100%; width: 100%; margin-top: 0.4rem; padding-top: 0.9rem; border-top: 1px solid var(--border); }
+/*
+ * The now-playing row: play/pause, title and a scrub bar, directly under the
+ * video. The full deck (speed, volume sliders, shuffle…) is one click away.
+ * Without this the transport sat below a 900px video, so pressing Play on the
+ * song list left the user with a video and no visible controls.
+ */
+.player-shell__bar { display: flex; align-items: center; gap: 0.65rem; width: 100%; flex: 1 0 100%; margin-top: 0.35rem; }
+.player-shell__bar .player-play-button { flex: none; width: 2.4rem; height: 2.4rem; }
+.player-shell__bar-track { display: grid; gap: 0.15rem; min-width: 0; flex: 1 1 auto; }
+.player-shell__bar-track strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
+.player-shell__bar-track small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; }
+.player-shell__bar-seek { flex: 1 1 220px; min-width: 90px; accent-color: var(--accent); cursor: pointer; }
+.player-shell__bar-time { flex: none; color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
 .player-shell__seek-row { display: grid; grid-template-columns: 3rem minmax(0, 1fr) 3rem; align-items: center; gap: 0.65rem; color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
 .player-shell__seek-row > span:last-child { text-align: right; }
 .player-shell__seek-row input,

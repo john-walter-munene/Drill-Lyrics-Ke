@@ -42,15 +42,17 @@ test.describe('markdown submission', () => {
     const health = await request.get(`${API_URL}/api/health/ready`);
     test.skip(!health.ok(), `API not reachable at ${API_URL}; start the stack (docs/runbook.md).`);
 
-    const songs = await request.get(`${API_URL}/api/songs?q=${encodeURIComponent(CATALOGUE_SONG_SLUG)}`);
-    const song = (await songs.json() as { items: { id: string; slug: string }[] }).items
-      .find((item) => item.slug === CATALOGUE_SONG_SLUG);
-    expect(song, `seeded song ${CATALOGUE_SONG_SLUG} must exist — run npm run db:seed`).toBeTruthy();
+    // By slug, not by title: `?q=` is a title search and can never match a slug
+    // such as `masicka-update-official-video`.
+    const songRes = await request.get(`${API_URL}/api/songs/${encodeURIComponent(CATALOGUE_SONG_SLUG)}`);
+    expect(songRes.ok(), `seeded song ${CATALOGUE_SONG_SLUG} must exist — run npm run db:seed`).toBeTruthy();
+    const song = (await songRes.json()) as { id: string; slug: string };
+    expect(song.id).toBeTruthy();
 
     // An unknown frontmatter key must be refused, not ignored.
     const bad = documentFor('bad').replace('language: mixed', 'language: mixed\nlangauge: typo');
     const rejected = await request.post(`${API_URL}/api/lyrics/submissions`, {
-      data: { songId: song!.id, markdown: bad },
+      data: { songId: song.id, markdown: bad },
     });
     expect(rejected.status()).toBe(422);
     const body = await rejected.json() as { message?: { langauge?: string[] } };
@@ -61,13 +63,13 @@ test.describe('markdown submission', () => {
     const health = await request.get(`${API_URL}/api/health/ready`);
     test.skip(!health.ok(), `API not reachable at ${API_URL}; start the stack (docs/runbook.md).`);
 
-    const songs = await request.get(`${API_URL}/api/songs?q=${encodeURIComponent(CATALOGUE_SONG_SLUG)}`);
-    const song = (await songs.json() as { items: { id: string; slug: string }[] }).items
-      .find((item) => item.slug === CATALOGUE_SONG_SLUG);
-    expect(song).toBeTruthy();
+    // By slug: `?q=` searches titles, never slugs.
+    const songRes = await request.get(`${API_URL}/api/songs/${encodeURIComponent(CATALOGUE_SONG_SLUG)}`);
+    expect(songRes.ok(), `seeded song ${CATALOGUE_SONG_SLUG} must exist — run npm run db:seed`).toBeTruthy();
+    const song = (await songRes.json()) as { id: string };
 
     const created = await request.post(`${API_URL}/api/lyrics/submissions`, {
-      data: { songId: song!.id, markdown: documentFor(`E2E-${Date.now()}`) },
+      data: { songId: song.id, markdown: documentFor(`E2E-${Date.now()}`) },
     });
     expect(created.ok(), await created.text()).toBeTruthy();
     expect((await created.json() as { status: string }).status).toBe('pending');
@@ -81,12 +83,13 @@ test.describe('markdown submission', () => {
     const editor = page.getByLabel('Or paste the document');
     await editor.fill('---\ntitle: "Broken"\nartist: "A"\nyoutubeVideoId: "nope"\n---\n\nline');
     // Live validation, so the contributor sees the problem without a round trip.
-    await expect(page.getByRole('alert')).toContainText('11-character YouTube video id');
+    // Scoped to the form: the page shell renders its own alerts too.
+    await expect(page.locator('form').getByRole('alert')).toContainText('11-character YouTube video id');
     await expect(page.getByRole('button', { name: 'Submit for review' })).toBeDisabled();
 
     await editor.fill(documentFor('E2E-UI'));
     await expect(page.getByRole('status').filter({ hasText: 'Ready:' })).toBeVisible();
-    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(page.locator('form').getByRole('alert')).toHaveCount(0);
   });
 
   test('an uploaded .md file fills the editor', async ({ page }) => {
@@ -114,6 +117,6 @@ test.describe('markdown submission', () => {
       buffer: Buffer.from('not really a png'),
     });
 
-    await expect(page.getByRole('alert')).toContainText('Choose a Markdown file');
+    await expect(page.locator('form').getByRole('alert')).toContainText('Choose a Markdown file');
   });
 });

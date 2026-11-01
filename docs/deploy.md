@@ -255,7 +255,7 @@ See [`.env.example`](../.env.example). Rules:
 | Reset link opens a 404 or a localhost URL | `NEXT_PUBLIC_SITE_URL` was wrong when the link was generated | Set it to the public origin and request a new link (old ones are invalidated) |
 | Prod boots with `SMTP_HOST is required…` | `MAIL_PROVIDER=smtp` with an incomplete config | Set `SMTP_HOST`, `MAIL_FROM` (and credentials if the relay needs them), or use `mock` |
 | Web can't reach API in Docker | `NEXT_PUBLIC_API_URL` baked as `localhost` | Rebuild web with the browser-reachable URL |
-| Port already in use | Another checkout running | `npm run stack:down` in the other checkout, or change `*_PORT` in `infra/.env` |
+| Port already in use | Another checkout running | `npm run stack:down` in the other checkout, or change `*_PORT` in the repo-root `.env` |
 
 More local troubleshooting (including container health and log inspection):
 [`runbook.md`](./runbook.md).

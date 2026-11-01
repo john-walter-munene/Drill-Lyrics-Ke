@@ -135,7 +135,7 @@ type Artist = {
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/api/songs?q=&artist=&status=&page=` | — | Catalogue browse |
-| GET | `/api/songs/feeds` | — | Home shelves: `{ newSongs, syncedSongs, emergingArtists }` |
+| GET | `/api/songs/feeds` | — | Home shelves: `{ randomSongs, newSongs, syncedSongs, emergingArtists }` |
 | GET | `/api/songs/:slug` | — | Playback metadata |
 | GET | `/api/songs/:slug/lyrics` | — | **One payload per song** |
 
@@ -158,6 +158,24 @@ type Song = {
 `GET /api/songs/:slug/lyrics` → the payload defined in
 [`lyrics-format.md`](./lyrics-format.md) §3. Returns `404` when the song has no
 published version — the player then renders the "lyrics coming soon" state.
+
+### Home shelves (`GET /api/songs/feeds`)
+
+```ts
+type HomeFeeds = {
+  randomSongs: Song[];   // up to 6, drawn from the whole published catalogue
+  newSongs: Song[];      // up to 6, newest releases first
+  syncedSongs: Song[];   // up to 6 with a timed published version
+  emergingArtists: { slug: string; name: string; imageUrl: string | null; publishedSongs: number }[];
+};
+```
+
+`randomSongs` is what the home page's "Start here" shelf renders. It picks a
+random window of the published catalogue (a random `skip`, not
+`ORDER BY random()`), wrapping past the end so a short final page still fills the
+table. It is not stable between calls, so the response must not be cached for
+long — `/` revalidates every 60 seconds for exactly this reason. The other two
+shelves are ordered and safe to cache.
 
 ## Lyrics submissions (writes)
 
@@ -192,9 +210,28 @@ Every review outcome notifies an account-linked submitter (`MailService`). A
 guest submission has no stored address and is skipped; the audit log records
 `lyrics.notification_skipped` with the reason.
 
-Responses: `201` → `{ id, status: 'pending' }`; `404` → song is not published;
-`422` → invalid or empty lyrics, with per-field errors for a Markdown document
-(`frontmatter`, `title`, `youtubeVideoId`, `lyrics`, `annotations`).
+Responses: `201` → `{ id, status: 'pending' }`; `404` → the chosen song is not
+published (`"Choose a published song from the catalogue"`); `422` → the lyrics
+cannot be read, with one message per field:
+
+```json
+{
+  "statusCode": 422,
+  "message": "Line 2 starts before line 1…",
+  "errors": { "body": ["at least one lyric line is required"], "timestamps": ["…"] },
+  "path": "/api/lyrics/submissions"
+}
+```
+
+The `errors` keys are the parser's own fields — `body`, `timestamps`,
+`frontmatter`, `title`, `youtubeVideoId`, `lyrics`, `annotations` — and only the
+fields that failed appear. An empty `markdown` is rejected by request validation
+(`400`) before the parser runs.
+
+A submission is never published by this endpoint. It is `pending`, a moderator
+reviews it, and only an approval creates the public `LyricVersion` — see
+[Review](#review-moderator). A guest submission has no account; a signed-in one
+appears in the caller's `mine` list immediately.
 
 **Statuses:** `draft` · `pending` · `changes_requested` · `approved` ·
 `published` · `rejected` · `unpublished`.
@@ -218,6 +255,14 @@ are saved to the submission; a moderator must still approve them. Editing a
 published submission creates a new published `LyricVersion`, retires the prior
 version, updates `Song.syncedVersionId`, and records the change in the audit
 log. All lines need valid timestamps for the version to be marked synchronized.
+
+`Song.syncedVersionId` is **the** pointer to the live version, and the public
+read (`GET /api/songs/:slug/lyrics`) serves that version rather than simply the
+newest published row. The difference matters after an unpublish: `unpublish`
+sets `published: false` on one version, and older superseded editions keep the
+flag, so "newest published" would silently serve the edition a moderator had
+just taken down. The selection rule lives in
+`modules/songs/published-version.ts` and is unit-tested on its own.
 
 ## Search
 
@@ -363,14 +408,14 @@ opt-in and makes no promise of payment.
 |---|---|---|---|
 | POST | `/api/artists/suggestions` | — | `{ youtubeChannel, suggestedName? }`; resolves and queues a review item |
 | GET | `/api/admin/artist-suggestions` | moderator | Pending candidates with sample uploads |
-| POST | `/api/admin/artist-suggestions/:id/approve` | moderator | Creates artist and imports draft song candidates |
+| POST | `/api/admin/artist-suggestions/:id/approve` | moderator | Creates the artist and imports the whole channel (music uploads are published, as with `POST /api/admin/artists`) |
 | POST | `/api/admin/artist-suggestions/:id/reject` | moderator | `{ reason }` |
 | POST | `/api/admin/artists` | moderator | `{ youtubeChannel, name?, importAll? }`; adds the artist and imports the whole channel. An already-known channel returns `{ alreadyExists: true, sync: null, summary }` — not an error |
 | GET | `/api/admin/artists` | moderator | Artists with sync state and imported draft/published counts |
 | POST | `/api/admin/artists/:id/sync` | moderator | `{ importAll?, restart? }`; walks the WHOLE channel (or resumes it). Returns `SyncResult`; `409` when a sync for this artist is already running |
 | GET | `/api/admin/acquisition` | moderator | `{ configured, setup?, artistsWithChannel, importedDrafts, importedPublished }` |
 | POST | `/api/admin/acquisition/preview` | moderator | `{ youtubeChannel }`; resolves a link without creating anything |
-| GET | `/api/admin/songs/drafts` | moderator | Imported draft/pending candidates, optionally `?artistId=` |
+| GET | `/api/admin/songs/drafts` | moderator | Imported draft/pending candidates, optionally `?artistId=`; `?all=true` returns every imported song for the artist (published included) |
 | POST | `/api/admin/songs/:id/publish` | moderator | Publishes a reviewed song candidate |
 
 ### Acquisition
@@ -381,36 +426,51 @@ video link** (`watch?v=`, `youtu.be/`, `/shorts/`, `/live/`) — a video resolve
 to the channel that owns it.
 
 `POST /api/admin/artists` resolves the channel and then walks its uploads
-playlist to the last page (`pagesPerArtistPerCycle` no longer applies to an
-explicit sync). The walk is bounded by `pageInfo.totalResults`, the channel's own
-upload count, and YouTube metadata is fetched in batches of up to 50 ids per
-`videos.list` call. Per upload:
+playlist to the last page. The walk is bounded by `pageInfo.totalResults`, the
+channel's own upload count, and YouTube metadata is fetched in batches of up to
+50 ids per `videos.list` call. Per upload:
 
-- **rejected** — YouTube Shorts, live/upcoming streams, anything under 30s.
-  Never imported, even with `importAll`;
-- **audio / video** — imported as a `draft` song with `youtubeImportKind` and
-  `youtubeImportReason`, credited to the artist as primary;
+- **rejected** — YouTube Shorts, anything under 30s, and live/upcoming streams.
+  Never imported, even with `importAll`. A **scheduled premiere** counts as
+  released once its publish date has passed (YouTube keeps
+  `liveBroadcastContent: "upcoming"` on it), so a released song is imported;
+  one still waiting is skipped and counted in `awaitingRelease`;
+- **audio / video** — a music upload. Imported and **published** into the
+  catalogue (`YOUTUBE_AUTO_PUBLISH`, default on); with it off, `draft`;
 - **unclear or a non-Music category** — imported as a **review candidate** (the
   same `draft` row, `youtubeImportKind: "unclear"`), counted in `skipped`, and
-  never published on its own. `UNCLEAR_PAUSE_THRESHOLD` such uploads in a row
-  pause the walk (`YoutubeChannelSync.pausedByFilter`); `{ "importAll": true }`
-  overrides the pause for that request.
+  never published on its own. `{ "importAll": true }` imports these too.
+
+Classification never stops the walk: a channel that does not look all-music is
+reported once (`pausedReason`, mirrored to `YoutubeChannelSync.lastError`) and
+the remaining pages are still imported. Stopping was how a real artist ended up
+with nothing in the app — the cursor never advanced past the page it paused on.
 
 The walk saves its position after **every page**. A failure part-way (quota,
 network) keeps what was imported and is reported on the result rather than
-thrown; the next sync resumes from the failed page.
+thrown; the next sync resumes from the saved `nextPageToken`.
 
 Songs are keyed by `Song.youtubeVideoId` (unique), so re-running a sync is
 idempotent and a video linked from a second artist adds a feature credit rather
-than a duplicate row. `SyncResult` reports `{ pages?, pagesThisPass?, scanned,
-created, updated, skipped, drafts, published, complete, pausedReason, error? }`.
-`complete` is true only when the final page was reached; `error` is set when the
-pass stopped early. One sync per artist may run at a time: a second call while
-one is in flight returns `409 This channel is already being imported`.
-`{ "restart": true }` begins the walk again from the newest upload (used to
-re-check a channel whose earlier import finished before it imported anything).
-Uploads stay drafts until a human publishes them; playback remains a YouTube
-embed.
+than a duplicate row. A song imported as a draft is promoted on a later sync
+once auto-publish is on. `SyncResult` reports `{ pages?, pagesThisPass?,
+scanned, created, updated, skipped, awaitingRelease?, drafts, published,
+complete, pausedReason, autoPublished?, error? }`. `complete` is true only when
+the final page was reached; `error` is set when the pass stopped early. One sync
+per artist may run at a time: a second call while one is in flight returns `409
+This channel is already being imported`. `{ "restart": true }` begins the walk
+again from the newest upload (used to re-check a channel whose earlier import
+finished before it imported anything).
+
+An import that published songs calls the web app's `POST /api/revalidate`, so
+`/songs`, `/artists` and the artist's own page reflect it immediately rather
+than after the ISR window. Playback is always a YouTube embed; the app never
+hosts media.
+
+Where the synced catalogue shows up: `/songs` (paginated, 20 per page),
+`/songs?artist=<slug>` for one artist, and `/artists/<slug>`, which lists the
+artist's songs with a play button on every row and paginates. Synced songs play
+through the same persistent player as the seeded ones.
 
 ## Administration
 

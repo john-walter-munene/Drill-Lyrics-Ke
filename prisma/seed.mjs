@@ -34,7 +34,7 @@ async function main() {
     // account that quietly does not exist, i.e. "admin login does not work".
     throw new Error(
       'SEED_ADMIN_PASSWORD must be configured with at least 10 characters — ' +
-      'set it in infra/.env (or the host .env.local) and restart the API. ' +
+      'set SEED_ADMIN_PASSWORD in the repo-root .env and re-create the api container. ' +
       'Until then NO admin account is created.',
     );
   }

@@ -83,3 +83,43 @@ test('a festival or a live-set recording is not a release', () => {
   assert.notEqual(classifyUpload({ title: 'RYMGYM Festival', durationSeconds: 95, category: 'Music' }).kind, 'audio');
   assert.notEqual(classifyUpload({ title: 'WAKADINALI - "RONG EXPERIENCE" LIVE PART 1', durationSeconds: 1450, category: 'Music' }).kind, 'audio');
 });
+
+test('a song that was released as a premiere is imported, not skipped', () => {
+  // YouTube keeps `liveBroadcastContent: 'upcoming'` on a premiere after its
+  // scheduled time has passed. The upload's publish date settles it, and a real
+  // song stayed out of the catalogue when this case was treated as a stream.
+  const result = classifyUpload({
+    title: 'Buruklyn Boyz - Matha (Official Video)',
+    durationSeconds: 203,
+    category: 'Music',
+    liveBroadcastContent: 'upcoming',
+    publishedAt: '2026-03-01T12:00:00Z',
+  });
+  assert.notEqual(result.kind, 'rejected');
+  assert.equal(result.kind, 'audio');
+  assert.ok(result.reasons.includes('scheduled upload, now published'));
+});
+
+test('a premiere that has not gone live yet is held back', () => {
+  const future = new Date(Date.now() + 7 * 24 * 3_600_000).toISOString();
+  const result = classifyUpload({
+    title: 'Buruklyn Boyz - Matha (Official Video)',
+    durationSeconds: 203,
+    category: 'Music',
+    liveBroadcastContent: 'upcoming',
+    publishedAt: future,
+  });
+  assert.equal(result.kind, 'rejected');
+  assert.ok(result.reasons.includes('live stream'));
+});
+
+test('a stream that is live right now is never imported', () => {
+  const result = classifyUpload({
+    title: 'Buruklyn Boyz - Matha (Official Video)',
+    durationSeconds: 203,
+    category: 'Music',
+    liveBroadcastContent: 'live',
+    publishedAt: '2020-01-01T00:00:00Z',
+  });
+  assert.equal(result.kind, 'rejected');
+});

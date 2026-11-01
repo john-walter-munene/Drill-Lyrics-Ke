@@ -38,6 +38,10 @@ if ! command -v initdb >/dev/null 2>&1; then
   exit 1
 fi
 
+# Compose runs this as `entrypoint: ["/app/infra/docker-entrypoint.sh"]` with a
+# bind-mounted repo at /app, so the data directory must live OUTSIDE that mount:
+# a path under /app would be written into the host checkout and survive
+# `down -v`. The images set this explicitly; this default is the same place.
 PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 PGPORT="${PGPORT:-5432}"
 PG_DB="${POSTGRES_DB:-drillke}"
@@ -58,6 +62,7 @@ as_postgres() {
   fi
 }
 
+echo "[entrypoint] PostgreSQL data: $PGDATA ($(if [ -f "$PGDATA/PG_VERSION" ]; then echo "PG $(cat "$PGDATA/PG_VERSION")"; else echo uninitialised; fi))"
 if [ ! -f "$PGDATA/PG_VERSION" ]; then
   echo "[entrypoint] initialising PostgreSQL data directory at $PGDATA"
   as_postgres "initdb -D '$PGDATA' -U postgres --auth-local=trust --auth-host=scram-sha-256 >/dev/null"
@@ -95,14 +100,35 @@ export DATABASE_URL="${DATABASE_URL:-postgresql://$PG_USER:$PG_PASS@localhost:$P
 # Without this, `migrate deploy` applies the SQL but the compiled code fails to
 # type-check against the stale client and the API silently serves the last
 # build. Cheap (~1s) and idempotent, so run it on every boot, before migrating.
-if [ -z "${SKIP_PRISMA_GENERATE:-}" ]; then
-  echo "[entrypoint] generating Prisma client"
-  npx prisma generate --schema prisma/schema.prisma >/dev/null
+#
+# The workspace root is the directory that holds prisma/. Both images put it at
+# /app; this resolves it rather than assuming, so a different workdir cannot
+# turn a container start into a restart loop over "schema not found".
+if [ -f /app/prisma/schema.prisma ]; then
+  APP_ROOT=/app
+elif [ -f ./prisma/schema.prisma ]; then
+  APP_ROOT=.
+else
+  APP_ROOT=$(dirname "$(dirname "$(readlink -f "$0")")")
+fi
+cd "$APP_ROOT"
+
+# Use the installed Prisma CLI, never `npx prisma`: on a slow or offline network
+# npx decides to DOWNLOAD the CLI, which turns a container start into a
+# multi-minute hang that ends in a restart loop. The images install it; if it is
+# missing, say so and keep going instead of waiting.
+if [ ! -x ./node_modules/.bin/prisma ]; then
+  echo "[entrypoint] WARNING: node_modules/.bin/prisma missing — run npm ci (dev: npm run dev:stack:install)" >&2
 fi
 
-if [ -z "${SKIP_MIGRATE:-}" ]; then
+if [ -z "${SKIP_PRISMA_GENERATE:-}" ] && [ -x ./node_modules/.bin/prisma ]; then
+  echo "[entrypoint] generating Prisma client"
+  ./node_modules/.bin/prisma generate --schema prisma/schema.prisma >/dev/null
+fi
+
+if [ -z "${SKIP_MIGRATE:-}" ] && [ -x ./node_modules/.bin/prisma ]; then
   echo "[entrypoint] applying Prisma migrations"
-  npx prisma migrate deploy --schema prisma/schema.prisma
+  ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
   if [ "${SEED_ON_START:-true}" = "true" ]; then
     echo "[entrypoint] seeding (set SEED_ON_START=false to skip)"
     npm run db:seed || echo "[entrypoint] seed skipped (already applied or failed) — continuing"

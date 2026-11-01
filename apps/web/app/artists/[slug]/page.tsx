@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getArtist, listSongs } from '../../../api';
 import { artistJsonLd, pageMetadata } from '../../../lib/seo';
+import SongList from '../../songs/SongList';
 
 export const revalidate = 300;
 
@@ -23,12 +24,19 @@ export async function generateMetadata({
 
 export default async function ArtistPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ page?: string }>;
 }) {
   const { slug } = await params;
-  const [artist, songs] = await Promise.all([getArtist(slug), listSongs({ artist: slug })]);
+  const { page: pageParam } = await searchParams;
+  const page = Number(pageParam ?? 1) || 1;
+  const [artist, songs] = await Promise.all([getArtist(slug), listSongs({ artist: slug, page })]);
   if (!artist) notFound();
+  // A synced channel can hold hundreds of uploads, so the page cannot stop at
+  // the first 20: the rest of the catalogue has to be reachable from here.
+  const pageHref = (target: number) => (target <= 1 ? `/artists/${slug}` : `/artists/${slug}?page=${target}`);
 
   return (
     <main className="container">
@@ -63,25 +71,28 @@ export default async function ArtistPage({
         </p>
       ) : null}
 
-      <h2 className="page-section" style={{ fontSize: '1.1rem' }}>Songs</h2>
+      <h2 className="page-section" style={{ fontSize: '1.1rem' }}>
+        Songs{songs.total ? <span className="muted" style={{ fontWeight: 400 }}> · {songs.total}</span> : null}
+      </h2>
       {songs.items.length === 0 ? (
-        <p className="muted">No songs in the catalogue yet.</p>
+        <p className="muted">
+          {artist.youtubeChannelId
+            ? 'Their catalogue is being imported — songs appear here as they are read from the channel.'
+            : 'No songs in the catalogue yet.'}
+        </p>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: '0.75rem' }}>
-          {songs.items.map((song) => (
-            <li key={song.slug} className="panel">
-              <Link href={`/songs/${song.slug}`}>
-                <strong>{song.title}</strong>
-              </Link>
-              {song.lyrics.versionId ? (
-                <span className="badge" style={{ marginLeft: '0.5rem' }}>
-                  {song.lyrics.syncStatus === 'synchronized' ? 'Synced' : 'Lyrics'}
-                </span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+        <SongList songs={songs.items} />
       )}
+
+      {songs.totalPages > 1 ? (
+        <nav aria-label="Catalogue pages" className="page-toolbar" style={{ marginTop: '1.25rem' }}>
+          {songs.page > 1 ? <Link className="btn btn--sm" href={pageHref(songs.page - 1)}>← Previous</Link> : null}
+          <span className="muted">
+            Page {songs.page} of {songs.totalPages}
+          </span>
+          {songs.page < songs.totalPages ? <Link className="btn btn--sm" href={pageHref(songs.page + 1)}>Next →</Link> : null}
+        </nav>
+      ) : null}
     </main>
   );
 }
