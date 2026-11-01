@@ -4,6 +4,7 @@ import {
   findActiveLineIndex,
   isSynchronized,
   msToTimestamp,
+  resolveAnnotations,
   timestampToMs,
   withDerivedEnds,
   type LyricLine,
@@ -62,4 +63,50 @@ test('withDerivedEnds fills gaps without mutating the input', () => {
   assert.equal(derived[0].endMs, 15_200);
   assert.equal(derived[2].endMs, undefined);
   assert.equal(lines[0].endMs, undefined);
+});
+
+const annotationLines: LyricLine[] = [
+  { index: 0, startMs: -1, text: 'Nairobi nights, tunachapa kazi' },
+  { index: 1, startMs: -1, text: 'Wanatoka Eastlands hadi CBD' },
+];
+
+test('resolveAnnotations anchors an omitted line to the first matching line', () => {
+  const result = resolveAnnotations(annotationLines, [{ phrase: 'eastlands', explanation: 'An area of Nairobi.' }]);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.annotations, [{ phrase: 'eastlands', explanation: 'An area of Nairobi.', lineIndex: 1 }]);
+});
+
+test('resolveAnnotations honours an explicit line and trims values', () => {
+  const result = resolveAnnotations(annotationLines, [{ phrase: '  CBD ', explanation: ' Central business district. ', lineIndex: 1 }]);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.annotations, [{ phrase: 'CBD', explanation: 'Central business district.', lineIndex: 1 }]);
+});
+
+test('resolveAnnotations rejects phrases that drift from the lyrics', () => {
+  const missing = resolveAnnotations(annotationLines, [{ phrase: 'Mombasa', explanation: 'x' }]);
+  assert.equal(missing.ok, false);
+  if (missing.ok) return;
+  assert.match(missing.errors.annotations[0], /does not appear/);
+
+  const wrongLine = resolveAnnotations(annotationLines, [{ phrase: 'CBD', explanation: 'x', lineIndex: 0 }]);
+  assert.equal(wrongLine.ok, false);
+
+  const missingLine = resolveAnnotations(annotationLines, [{ phrase: 'CBD', explanation: 'x', lineIndex: 9 }]);
+  assert.equal(missingLine.ok, false);
+});
+
+test('resolveAnnotations rejects empty or oversized fields', () => {
+  const empty = resolveAnnotations(annotationLines, [{ phrase: 'CBD', explanation: '   ' }]);
+  assert.equal(empty.ok, false);
+  if (empty.ok) return;
+  assert.match(empty.errors.annotations[0], /needs an explanation/);
+
+  const noPhrase = resolveAnnotations(annotationLines, [{ phrase: '', explanation: 'x' }]);
+  assert.equal(noPhrase.ok, false);
+});
+
+test('resolveAnnotations accepts an empty list', () => {
+  assert.deepEqual(resolveAnnotations(annotationLines, []), { ok: true, annotations: [] });
 });

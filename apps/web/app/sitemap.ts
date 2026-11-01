@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { SITE_URL, listSitemapPaths } from '../lib/api';
+import { SITE_URL, listSitemapPaths } from '../api';
 
 // Regenerated hourly; every entry comes from published content only.
 export const revalidate = 3600;

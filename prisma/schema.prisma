@@ -82,20 +82,88 @@ enum ReportStatus {
   dismissed
 }
 
+enum ArtistSuggestionStatus {
+  pending
+  approved
+  rejected
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
   displayName  String
   passwordHash String?
   role         Role     @default(member)
+  /// When the address was confirmed. Null means unconfirmed.
+  ///
+  /// Unconfirmed accounts can browse, read and submit lyrics — v1 does not
+  /// punish a visitor for not opening an email. The flag exists so the account
+  /// page can prompt, and so a future feature that needs a proven address can
+  /// gate on it. Seeded and moderator-created accounts are confirmed.
+  emailVerifiedAt DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  submissions LyricsSubmission[]
-  reports     Report[]
-  auditLogs   AuditLog[]
+  submissions     LyricsSubmission[]
+  reports         Report[]
+  auditLogs       AuditLog[]
+  sessions        Session[]
+  passwordResets  PasswordResetToken[]
+  emailConfirms   EmailConfirmationToken[]
+  artistSuggestions ArtistSuggestion[] @relation("ArtistSuggestionSubmitter")
+  reviewedArtistSuggestions ArtistSuggestion[] @relation("ArtistSuggestionReviewer")
 
   @@index([role])
+}
+
+/// A single-use email-confirmation link.
+///
+/// Same rules as `PasswordResetToken`: only the SHA-256 is stored, it is
+/// single-use, and it expires. Kept as a separate table rather than a `kind`
+/// column so one token can never be spent as the other — a confirmation link
+/// that could reset a password would be a privilege escalation.
+model EmailConfirmationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+/// A single-use password-reset link.
+///
+/// Only the SHA-256 of the token is stored: a database leak must not hand an
+/// attacker working reset links. `usedAt` is kept rather than deleted so a
+/// replay attempt is distinguishable from a forged token.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+/// Revocable JWT sessions. Activity is tracked server-side for rolling inactivity expiry.
+model Session {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt      DateTime
+  lastActivityAt DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([userId, expiresAt, lastActivityAt])
+  @@index([expiresAt])
 }
 
 model Artist {
@@ -105,16 +173,57 @@ model Artist {
   bio              String?
   imageUrl         String?
   youtubeChannelId String?  @unique
+  youtubeSyncEnabled Boolean @default(false)
   verified         Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   links    ArtistLink[]
   songs    SongArtist[]
+  youtubeSync YoutubeChannelSync?
   episodes PodcastEpisodeArtist[]
   events   EventArtist[]
 
   @@index([name])
+}
+
+/// Guest or signed-in channel suggestions wait for human confirmation before
+/// an artist is created or imports become public.
+model ArtistSuggestion {
+  id                 String                 @id @default(cuid())
+  youtubeChannelId   String                 @unique
+  channelTitle       String
+  channelDescription String?
+  suggestedName      String?
+  sampleVideos       Json
+  submitterId        String?
+  submitter          User?                  @relation("ArtistSuggestionSubmitter", fields: [submitterId], references: [id], onDelete: SetNull)
+  status             ArtistSuggestionStatus @default(pending)
+  reviewerId         String?
+  reviewer           User?                  @relation("ArtistSuggestionReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewNote         String?
+  createdAt          DateTime               @default(now())
+  reviewedAt         DateTime?
+
+  @@index([status, createdAt])
+}
+
+/// Cursor and status for importing an artist's public YouTube uploads.
+model YoutubeChannelSync {
+  id                   String   @id @default(cuid())
+  artistId             String   @unique
+  artist               Artist   @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  uploadsPlaylistId    String?
+  nextPageToken        String?
+  initialImportComplete Boolean @default(false)
+  lastSyncAt           DateTime?
+  lastError             String?
+  lastScanned           Int      @default(0)
+  lastCreated           Int      @default(0)
+  /// Imports stopped because the channel holds videos that look non-musical.
+  /// Cleared by the admin's "import everything" action.
+  pausedByFilter       Boolean  @default(false)
+  updatedAt            DateTime @updatedAt
 }
 
 model ArtistLink {
@@ -175,6 +284,12 @@ model Song {
   language       Language   @default(mixed)
   releaseDate    DateTime?  @db.Date
   durationMs     Int?
+  youtubeImported Boolean  @default(false)
+  youtubeMetadataRefreshedAt DateTime?
+  /// What the importer thought this upload was (audio | video | unclear), and
+  /// why. Kept so the admin can judge a candidate without re-querying YouTube.
+  youtubeImportKind     String?
+  youtubeImportReason   String?
   status         SongStatus @default(draft)
   // Denormalised for catalogue sorting without joining versions.
   syncedVersionId String?
@@ -185,12 +300,16 @@ model Song {
   versions   LyricVersion[]
   djTracks   DjTrack[]
   episodes   PodcastEpisodeSong[]
+  submissions LyricsSubmission[]
 
   @@index([status, releaseDate])
   @@index([title])
-  // One published song per video. Drafts may reuse a video id (duplicates are
-  // caught in review), so uniqueness is enforced at the application layer too.
-  @@index([youtubeVideoId])
+  // One SONG per video, in every direction. Drafts used to be allowed to reuse
+  // an id, so a re-import could re-create a video that was already catalogued
+  // — which is how a channel sync created rows forever. The importer now upserts
+  // on this key; the index makes that guarantee hold in the database too.
+  @@unique([youtubeVideoId])
+  @@index([youtubeImported, status])
 }
 
 /// Join table so a song can credit a primary artist plus features.
@@ -221,6 +340,7 @@ model LyricVersion {
 
   lines       LyricLine[]
   annotations Annotation[]
+  publishedFrom LyricsSubmission? @relation("SubmissionPublishedVersion")
 
   @@unique([songId, version])
   @@index([songId, published])
@@ -255,12 +375,17 @@ model Annotation {
 model LyricsSubmission {
   id         String           @id @default(cuid())
   songId     String
-  userId     String
-  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song       Song             @relation(fields: [songId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   status     SubmissionStatus @default(pending)
   // Raw Markdown as submitted — the audit record of what was actually sent.
   markdown   String
   note       String?
+  creditPublicly Boolean @default(false)
+  contributorName String?
+  publishedVersionId String? @unique
+  publishedVersion LyricVersion? @relation("SubmissionPublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
   reviewerId String?
   reviewNote String?
   reviewedAt DateTime?

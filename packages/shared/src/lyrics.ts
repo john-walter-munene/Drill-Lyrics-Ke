@@ -3,8 +3,7 @@
  * player needs. The full authoring format is specified in
  * `docs/lyrics-format.md`.
  *
- * Only the *types* and *pure helpers* live here in Phase 0. The Markdown parser
- * (`parseLyrics`) is Phase 1 work — see `docs/roadmap.md`.
+ * Shared parsing and timing helpers keep browser and API interpretation aligned.
  */
 
 import type { SyncStatus } from './types.ts';
@@ -46,6 +45,114 @@ export interface LyricsFieldErrors {
 export type LyricsParseResult =
   | { ok: true; lyrics: ParsedLyrics }
   | { ok: false; errors: LyricsFieldErrors };
+
+/** Parse the simple text submission format. Timestamps are optional per line. */
+export function parseLyricsText(body: string): LyricsParseResult {
+  const errors: LyricsFieldErrors = {};
+  if (body.length > 512 * 1024) {
+    return { ok: false, errors: { body: ['Lyrics must be 512 KB or smaller.'] } };
+  }
+  const rawLines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (rawLines.length === 0) {
+    return { ok: false, errors: { body: ['Enter at least one lyric line.'] } };
+  }
+  if (rawLines.length > MAX_LYRIC_LINES) {
+    return { ok: false, errors: { body: [`Lyrics cannot exceed ${MAX_LYRIC_LINES} lines.`] } };
+  }
+
+  let lastTimestamp = -1;
+  const lines: LyricLine[] = rawLines.map((raw, index) => {
+    const match = /^(\[(?:(?:\d{2}):)?\d{2}:\d{2}\.\d{3}\])\s*(.*)$/.exec(raw);
+    if (!match) return { index, startMs: -1, text: raw };
+    const startMs = timestampToMs(match[1]);
+    if (startMs == null) {
+      errors.timestamps = [...(errors.timestamps ?? []), `Line ${index + 1} has an invalid timestamp.`];
+      return { index, startMs: -1, text: match[2] };
+    }
+    if (startMs < lastTimestamp) {
+      errors.timestamps = [...(errors.timestamps ?? []), `Line ${index + 1} timestamp moves backwards.`];
+    }
+    lastTimestamp = startMs;
+    if (!match[2].trim()) errors.body = [...(errors.body ?? []), `Line ${index + 1} has a timestamp but no lyric text.`];
+    return { index, startMs, text: match[2].trim() };
+  });
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    lyrics: { syncStatus: isSynchronized(lines) ? 'synchronized' : 'unsynchronized', lines, annotations: [] },
+  };
+}
+
+/** Limits for reviewer-authored annotations (see `docs/lyrics-format.md` §2). */
+export const MAX_ANNOTATIONS = 100;
+export const MAX_ANNOTATION_PHRASE = 80;
+export const MAX_ANNOTATION_EXPLANATION = 2_000;
+
+/**
+ * Normalise and validate reviewer-authored annotations against the lines they
+ * are published with. Phrase matching is case-insensitive and must resolve to a
+ * real line, so an annotation can never drift from the lyrics it explains.
+ *
+ * When `lineIndex` is omitted the first matching line is used. Returns either
+ * the resolved annotations (with 0-based `lineIndex` always set) or per-field
+ * errors shaped like {@link LyricsFieldErrors} for a `422` response.
+ */
+export function resolveAnnotations(
+  lines: readonly LyricLine[],
+  input: readonly Annotation[],
+): { ok: true; annotations: Annotation[] } | { ok: false; errors: LyricsFieldErrors } {
+  const annotations: Annotation[] = [];
+  const errors: string[] = [];
+  if (input.length > MAX_ANNOTATIONS) {
+    errors.push(`At most ${MAX_ANNOTATIONS} annotations can be published per version.`);
+  }
+  input.slice(0, MAX_ANNOTATIONS).forEach((candidate, position) => {
+    const label = `Annotation ${position + 1}`;
+    const phrase = (candidate.phrase ?? '').trim();
+    const explanation = (candidate.explanation ?? '').trim();
+    if (!phrase) {
+      errors.push(`${label} needs a phrase copied from the lyrics.`);
+      return;
+    }
+    if (phrase.length > MAX_ANNOTATION_PHRASE) {
+      errors.push(`${label} phrase must be ${MAX_ANNOTATION_PHRASE} characters or fewer.`);
+      return;
+    }
+    if (!explanation) {
+      errors.push(`${label} needs an explanation.`);
+      return;
+    }
+    if (explanation.length > MAX_ANNOTATION_EXPLANATION) {
+      errors.push(`${label} explanation must be ${MAX_ANNOTATION_EXPLANATION} characters or fewer.`);
+      return;
+    }
+    const needle = phrase.toLocaleLowerCase();
+    const matches = (text: string) => text.toLocaleLowerCase().includes(needle);
+    let lineIndex: number;
+    if (candidate.lineIndex == null) {
+      const found = lines.findIndex((line) => matches(line.text));
+      if (found < 0) {
+        errors.push(`${label} phrase “${phrase}” does not appear in the lyrics.`);
+        return;
+      }
+      lineIndex = found;
+    } else {
+      const line = lines[candidate.lineIndex];
+      if (!line) {
+        errors.push(`${label} points at line ${candidate.lineIndex + 1}, which does not exist.`);
+        return;
+      }
+      if (!matches(line.text)) {
+        errors.push(`${label} phrase “${phrase}” does not appear on line ${candidate.lineIndex + 1}.`);
+        return;
+      }
+      lineIndex = candidate.lineIndex;
+    }
+    annotations.push({ phrase, explanation, lineIndex });
+  });
+  return errors.length > 0 ? { ok: false, errors: { annotations: errors } } : { ok: true, annotations };
+}
 
 /** `^[mm:ss.mmm]` or `^[hh:mm:ss.mmm]` at the start of a line. */
 export const TIMESTAMP_PATTERN = /^\[(?:(\d{2}):)?(\d{2}):(\d{2})\.(\d{3})\]/;

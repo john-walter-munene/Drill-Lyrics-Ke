@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 /**
  * Body of `POST /api/lyrics/submissions`. The Markdown content itself is
@@ -20,4 +20,8 @@ export class CreateSubmissionDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  creditPublicly?: boolean;
 }

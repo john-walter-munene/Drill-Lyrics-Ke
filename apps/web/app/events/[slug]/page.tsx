@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { getEvent } from '../../../lib/api';
+import { getEvent } from '../../../api';
 import { eventJsonLd, pageMetadata } from '../../../lib/seo';
 import { formatEventTime } from '../../../lib/format';
 

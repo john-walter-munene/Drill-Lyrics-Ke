@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { getPodcast } from '../../../lib/api';
+import { getPodcast } from '../../../api';
 import { pageMetadata } from '../../../lib/seo';
 
 export const revalidate = 300;
@@ -15,7 +15,7 @@ export async function generateMetadata({
   if (!podcast) return { title: 'Podcast not found' };
   return pageMetadata({
     title: podcast.title,
-    description: podcast.description ?? `Episodes of ${podcast.title} on DrillKe.`,
+    description: podcast.description ?? `Episodes of ${podcast.title} on Drill Lyrics.`,
     path: `/podcasts/${podcast.slug}`,
   });
 }

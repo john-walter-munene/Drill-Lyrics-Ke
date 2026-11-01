@@ -49,7 +49,9 @@ metadata, timing and commentary — never media we do not have rights to.
    published without review.
 6. **Lightweight by design.** Everyday Android phones on mobile data are the
    target device.
-7. **One source of truth.** Postgres is authoritative; Markdown is import/export.
+7. **One source of truth.** Postgres is authoritative. Markdown import/export
+   exists for bulk authoring, but import only ever creates *pending* submissions
+   — it is a way into review, never a way around it.
 
 ---
 
@@ -69,16 +71,31 @@ not a preview of everything. The rule used to cut scope:
 | # | Capability | What the user gets |
 |---|---|---|
 | 1 | **Synchronized player** | YouTube embed + lyrics that highlight and auto-scroll, click a line to seek. Graceful "unsynced" state. |
-| 2 | **Annotations** | Tap a highlighted phrase to see the Sheng/slang/reference explained. |
-| 3 | **Song pages** | `/songs/[artist]/[song]` — server-rendered, SEO-ready, shareable. |
+| 2 | **Annotations** | Tap a reviewed phrase attached to a lyric line to read its explanation. Moderators author them in the admin review queue, anchored to a reviewed line and validated with `resolveAnnotations`, then publish them with the lyric version. |
+| 3 | **Song pages** | `/songs/[slug]` — server-rendered, SEO-ready, shareable. |
 | 4 | **Artist pages** | `/artists/[slug]` — bio, links, catalogue, verification badge. |
-| 5 | **Catalogue + search** | Browse songs and artists; search by title, artist or a lyric phrase. |
-| 6 | **Lyrics contribution** | Submit lyrics/timestamps/corrections; admin review queue; versioned approval. |
+| 5 | **Catalogue + search** | Browse songs and artists; search published songs by title, artist or lyric phrase, plus artists, DJs, podcasts and events. |
+| 6 | **Lyrics contribution** | Submit plain text or a Markdown file anonymously or with an account; moderators review, add line timings against the YouTube clock, and publish versioned lyrics. The contributor is notified of the outcome when the submission is tied to an account. |
 | 7 | **DJs** | `DJ` as a first-class role: directory, DJ profile, the songs they spin. |
 | 8 | **Drill podcasts** | Episode index referencing external video/audio, with linked artist + song. |
 | 9 | **Drill events** | Upcoming events with venue, date, lineup (artists + DJs) and ticket link. |
-| 10 | **About / Support** | `/about` and `/support` — who we are, how the model works, how to fund it. |
-| 11 | **Accounts** | Sign-up / sign-in, profile, roles (`member`, `contributor`, `moderator`, `admin`). |
+| 10 | **About / Support / Developers** | `/about`, `/support` and `/developers` explain the project, ways to help, and how developers can contribute to the open-source codebase. |
+| 11 | **Accounts** | Passport Local email/password, JWT sessions, account page and roles (`member`, `contributor`, `moderator`, `admin`). Password reset by emailed single-use link, email confirmation, data export, and self-service deletion. |
+| 12 | **Artist intake** | Guest channel suggestions, YouTube API verification, staff review, and full catalogue import from a channel. |
+| 13 | **Admin workspace** | Lyrics queue, artist suggestions, channel sync, song import review, role management and audit log. |
+
+Lyrics can be submitted without an account. Signed-in contributors can keep a
+submission history and opt into public credit when a submission is published.
+Public recognition is not a promise of payment. Songs and video remain on
+YouTube, which is the only player.
+
+**Acquisition is one link.** An admin pastes an artist's channel (or any one of
+their videos) into *Admin → Artists & sync* and the whole channel is read: every
+music upload is published straight into the catalogue and plays like any other
+song, on `/songs` and on the artist's own page. Uploads the importer cannot
+confirm as music are held as drafts for review rather than published; shorts and
+live streams are never imported. `YOUTUBE_AUTO_PUBLISH=false` makes every import
+a draft, for a deployment that wants a human on every song.
 
 ### 4.2 Deliberately out of v1
 
@@ -116,14 +133,48 @@ V1 is "shipped" when all of these hold:
 
 - One persistent player mounted in the root layout; navigation between songs
   never reloads the page.
-- The player owns the clock. The lyrics engine polls it and re-renders only when
-  the active line index changes.
-- The video is lazy — a facade renders first, the YouTube iframe loads on intent
-  (click, or `prefers-reduced-motion`-safe autoplay off).
+- **Playback never stops while you browse.** Once a track is playing it keeps
+  playing across every route in the app — sections, song pages, artist pages,
+  admin. Two things make that true and are easy to break: the YouTube player must
+  be re-initialised on each page's container (the API does not survive
+  navigation), and a song page must not re-register its track while something is
+  already playing. Both are covered by `e2e/player-persistence.spec.ts`.
+- A full page load loses the live player (the browser tears the iframe down), so
+  the track and queue are kept in `sessionStorage`: after a reload the same song
+  is cued and one click from resuming. It is deliberately not auto-played — a
+  browser blocks that, and a page load is not a play gesture.
+- The player is pinned to the top while a track is loaded, so the catalogue
+  scrolls underneath it and playback stays controllable from any section.
+- The player owns the clock through the YouTube IFrame Player API. The lyrics
+  view reads that clock and re-renders the active line as playback advances or
+  the listener scrubs in YouTube's controls.
+- The video is lazy — the YouTube iframe loads after a song is selected, with
+  autoplay off so listening starts from a clear user action.
 - `aria-current="true"` marks the active line; auto-scroll is user-disableable.
+- The catalogue can start a queued track and the same iframe loads the next
+  queued track when playback ends. This is a best-effort handoff; it is not an
+  audio crossfade and YouTube buffering can still create a gap.
+- The transport deck exposes seek/progress, elapsed and total time, play/pause,
+  previous/restart, next, shuffle, repeat off/all/one, volume/mute, playback
+  speed, and a selectable queue. Space toggles playback; left/right seek ten
+  seconds; up/down adjust volume; N/P change tracks. Shortcuts never intercept
+  typing or focused controls.
+- Listen/Watch is a preference for the **whole player**, not one song: choosing
+  it once carries over to every track and to the next visit (stored in
+  `localStorage` under `drill-lyrics-mode`). Both modes use the same visible,
+  interactive YouTube player; Listen gives the lyrics more room. The queue and
+  player controls do not extract or separately stream audio.
+- Synchronized lyric highlighting follows the YouTube clock. Listeners can
+  click a line to seek and turn automatic lyric scrolling off.
 - Two lyric states only: `unsynchronized` (readable, no timing) and
   `synchronized` (timed). A synced song that fails to parse degrades to
   unsynchronized and says so.
+
+YouTube remains the media host and controls owner. DrillKe does not layer two
+videos to fade their audio, extract audio, hide standard player controls, or
+continue playback in a hidden/background player. A crossfade or guaranteed
+gapless handoff would require a separately licensed audio source and a distinct
+product decision.
 
 ### 5.2 Locale content — artists, DJs, podcasts, events
 
@@ -160,8 +211,30 @@ member submits  →  validated server-side  →  pending
 
 - Lyrics are **versioned**: approving an edit creates a new version rather than
   mutating the old one, so rollback is just "publish version N-1".
-- The submission body is Markdown (`lyrics-format.md`), stored as submitted and
-  parsed into lines server-side. Raw HTML is never rendered.
+- The submission body is plain text or a Markdown document, stored as submitted
+  and parsed server-side into timed or untimed lines (see `lyrics-format.md`).
+  Raw HTML is rendered as text in either form.
+- Bulk authoring runs through `npm run content:import` / `content:export`. Import
+  only ever creates **pending** submissions, so Git is never a path to
+  publication without review.
+- Review outcomes are emailed to account-linked contributors. The default
+  provider is a mock that logs instead of sending, so no contributor receives
+  mail until a real transport (`MAIL_PROVIDER=smtp`) is configured.
+- **Password reset** sends a single-use link valid for an hour. The request is
+  indistinguishable from an unknown address, so it cannot be used to discover
+  which emails have accounts. Resetting revokes every session.
+- **Email confirmation** is sent on sign-up but is a soft gate: an unconfirmed
+  account browses and submits normally. The account page prompts while it is
+  unconfirmed, and a resend is one click.
+- **Account deletion** is password-confirmed and audited. Pending submissions are
+  withdrawn; published lyrics stay in the catalogue, because they are the
+  catalogue. `product.md` §5.4 (rights) allows that byline to be removed on
+  request.
+- **Data export** downloads one JSON file from the account page. Passwords and
+  security tokens are never in it.
+- Moderators can play the linked YouTube source, stamp each line from the
+  shared player clock, adjust timestamps, and save the pending submission. A
+  separate approval publishes it; every line must be timed for sync status.
 - Every review action is written to `AuditLog`.
 
 ### 5.4 Rights
@@ -195,7 +268,8 @@ organisations before there is demand.
   (manifest + safe areas) so the upgrade path is a PWA, not a rewrite.
 - **No audio hosting** of any kind until licensing exists.
 - **No ads** in v1; growth and support come from `/support`.
-- **No bespoke CMS.** Reviewers use `/admin`; content is Markdown import/export.
+- **No bespoke CMS.** Reviewers use `/admin`; Markdown import/export remains a
+  planned content workflow rather than a current feature.
 
 ## 8. Open questions
 

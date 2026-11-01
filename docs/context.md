@@ -11,6 +11,15 @@
 >
 > If this file and `product.md` disagree, **`product.md` wins**.
 
+> **Implementation status (23 October 2026):** this is the original product
+> brief, not the current stack diagram. The app now uses Next.js for the web
+> UI, NestJS for the API, PostgreSQL/Prisma, Passport Local plus JWT sessions,
+> and YouTube Data API v3 for channel metadata. Browser sessions are revoked
+> server-side and expire after 14 days of inactivity. Guest lyrics and artist
+> channel suggestions are supported; staff review is required before lyrics or
+> imported song candidates are published. See `product.md`, `architecture.md`,
+> `api.md`, and `roadmap.md` for the current contracts and remaining work.
+
 ---
 
 # DrillKe 🇰🇪
@@ -376,7 +385,8 @@ Contributors can:
 Administrators can:
 
 - Review pending submissions and preview formatted lyrics.
-- Check timestamp formatting.
+- Check timestamp formatting and mark line starts against the YouTube player clock.
+- Retiming published lyrics creates a new version and retains the previous version.
 - Edit metadata.
 - Approve, reject, or request corrections.
 - Unpublish content when necessary.
@@ -626,10 +636,10 @@ Additional libraries are introduced only when a specific feature requires them.
 
 | Technology | Responsibility |
 | --- | --- |
-| Next.js Route Handlers / Server Actions | API endpoints and server logic |
-| PostgreSQL *(proposed)* | Primary database |
-| Drizzle ORM or Prisma *(proposed)* | Typed database access and migrations |
-| Auth.js *(proposed)* | Authentication (Google sign-in plus email) |
+| NestJS API (`apps/api`) | API endpoints, validation, roles, throttling and moderation |
+| PostgreSQL | Primary database |
+| Prisma | Typed database access and migrations |
+| Passport Local + JWT | Email/password authentication and revocable 14-day inactivity sessions |
 | YouTube Data API v3 | Channel and video metadata import |
 | Object storage *(later, only when needed)* | Product images and other uploads |
 
@@ -647,7 +657,11 @@ Additional libraries are introduced only when a specific feature requires them.
 
 ## Architecture
 
-DrillKe starts as a **single deployable Next.js application** with a PostgreSQL database. There are no microservices and no separate backend until scale demands it.
+The original proposal below envisioned a single Next.js deployment. The adopted
+architecture is a Next.js web app and a NestJS modular monolith API on one
+PostgreSQL database. The remaining diagrams in this historical brief should be
+read as product-flow sketches; `architecture.md` is authoritative for code and
+deployment structure.
 
 ```text
 ┌────────────────────────────────────────────────────────┐
@@ -1006,7 +1020,7 @@ cd drillke
 pnpm install
 
 # 3. Create your environment file
-cp .env.example .env.local
+cp .env.example .env
 
 # 4. Start a local database (Docker example)
 docker run --name drillke-db -e POSTGRES_PASSWORD=postgres \
@@ -1028,20 +1042,25 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Environment Variables
 
-Copy `.env.example` to `.env.local` and fill in the values. **Never commit real secrets.**
+Copy `.env.example` to `.env` at the repo root and fill in the values. **Never
+commit real secrets.** `.env` is the only environment file: the Docker stacks,
+host `npm run dev` and the API all read it. An `.env.local` is not read here and
+owes nothing (Next.js would even let one shadow `.env`).
 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `NEXT_PUBLIC_SITE_URL` | Yes | Public base URL (for canonical links and sitemap) |
-| `AUTH_SECRET` | Yes | Secret used to sign sessions |
-| `AUTH_GOOGLE_ID` | Optional | Google OAuth client ID |
-| `AUTH_GOOGLE_SECRET` | Optional | Google OAuth client secret |
+| `JWT_SECRET` | Yes in production | Strong (≥32 characters) secret used to sign JWTs |
 | `YOUTUBE_API_KEY` | Optional | YouTube Data API key (artist and video import) |
-| `ADMIN_EMAILS` | Yes (initially) | Comma-separated emails granted admin on first sign-in |
-| `RATE_LIMIT_REDIS_URL` | Optional | Store for rate limiting at scale |
-| `EMAIL_SERVER` / `EMAIL_FROM` | Optional | Transactional email settings |
-| `NEXT_PUBLIC_ANALYTICS_ID` | Optional | Privacy-respecting analytics identifier |
+| `YOUTUBE_AUTO_PUBLISH` | Optional | `true` (default) publishes imported music; `false` leaves it as drafts |
+| `SEED_ADMIN_EMAIL` | Yes for initial admin seed | Email for the seeded administrator |
+| `SEED_ADMIN_PASSWORD` | Yes for initial admin seed | Password for the seeded administrator |
+| `MAIL_PROVIDER` | Optional | `mock` (default, logs messages) or `smtp` |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | With `MAIL_PROVIDER=smtp` | SMTP relay settings; validated at boot |
+| `MAIL_FROM` | With `MAIL_PROVIDER=smtp` | Envelope sender, e.g. `DrillKe <no-reply@drillke.com>` |
+
+The annotated list of every setting is [`.env.example`](../.env.example).
 
 Variables prefixed `NEXT_PUBLIC_` are exposed to the browser. Do not put secrets in them.
 

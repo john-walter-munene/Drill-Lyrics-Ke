@@ -3,6 +3,8 @@ import {
   ExecutionContext,
   Injectable,
   Module,
+  ForbiddenException,
+  UnauthorizedException,
   SetMetadata,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -41,10 +43,16 @@ export class RolesGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest<{ user?: { role?: Role } }>();
     const role = req.user?.role;
-    if (!role) return false;
+    if (!role) throw new UnauthorizedException('Sign in to continue');
 
     const minimum = Math.max(...required.map((r) => ROLE_RANK[r]));
-    return ROLE_RANK[role] >= minimum;
+    if (ROLE_RANK[role] < minimum) {
+      // Say so explicitly. A bare `false` becomes Nest's 403 "Forbidden resource",
+      // which reads like a broken app rather than "this account is not staff" —
+      // the exact confusion the admin dashboard had to work around.
+      throw new ForbiddenException('This area is for staff accounts');
+    }
+    return true;
   }
 }
 

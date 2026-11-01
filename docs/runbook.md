@@ -25,7 +25,7 @@ API and PostgreSQL, plus one frontend container.
 | Use it for | day-to-day coding | checking what will ship |
 
 Both are reachable at the same URLs, so **run one at a time** (or change ports
-in `infra/.env` — see [Ports](#ports-and-configuration)).
+in `.env` — see [Ports and configuration](#ports-and-configuration)).
 
 | Service | URL |
 |---|---|
@@ -50,12 +50,25 @@ First run builds the image and installs dependencies **inside** the container
 while `package-lock.json` and the package manifests are unchanged.
 
 ```powershell
-npm run dev:stack:bg     # start in the background and return to the prompt
-npm run dev:stack:ps     # container status
-npm run dev:stack:logs   # tail api + web
-npm run dev:stack:down   # STOP (database data is kept)
-npm run dev:stack:reset  # stop and delete the database volume
+npm run dev:stack:bg       # start in the background and return to the prompt
+npm run dev:stack:ps       # container status
+npm run dev:stack:logs     # tail api + web
+npm run dev:stack:restart  # re-create api + web (needed after editing .env)
+npm run dev:stack:install  # re-run npm ci in the shared volume, by hand
+npm run dev:stack:down     # STOP (database data is kept)
+npm run dev:stack:reset    # stop and delete the database volume
 ```
+
+### Starting a stopped stack
+
+`npm run dev:stack:bg` (or `docker compose ... up -d`) is always safe. Docker
+Desktop's **Start** button also works, but note what it starts: every container
+in the project, including the one-shot `install` job. That job re-exits 0 — it
+only reinstalls when `package-lock.json` or a package manifest changed — and it
+is set up to exit cleanly under Desktop's Start (an init process, and the
+manifests are checked before anything is installed). If Start reports
+`context canceled`, run `npm run dev:stack:bg` instead; it re-creates whatever
+is missing instead of re-starting it in place.
 
 ### How hot reload works
 
@@ -133,24 +146,42 @@ then Nest's route table and `DrillKe API listening on :4000`.
 
 ## Ports and configuration
 
-Defaults: web `3000`, API `4000`, database `5432`.
-
-To change them, copy the example and edit:
+**There is one environment file: `.env` at the repo root.** Both stacks and host
+development read it. Do not create `infra/.env`, `.env.local`, or per-app env
+files — none of them is read, and a value set there is silently ignored. Compose
+passes the same file to both containers, so every key in it reaches the API and
+the web app without being repeated in a compose file.
 
 ```powershell
-Copy-Item infra/.env.example infra/.env
+Copy-Item .env.example .env     # once per checkout; .env is git-ignored
 ```
 
-Compose reads `infra/.env` automatically for **both** stacks. Full list in
-[`infra/.env.example`](../infra/.env.example).
+How each runner finds it:
+
+| Runner | Where the values come from |
+|---|---|
+| `npm run dev:stack` / `stack:*` | Compose reads `.env` as the project dotenv file AND passes it into the api and web containers via `env_file`. Works the same when you call `docker compose -f infra/...` by hand. |
+| `npm run dev` (web) | Next.js reads `.env` from the repo root. |
+| `npm run dev:api` (api) | `apps/api/src/common/load-env.ts` loads the nearest `.env` at boot. |
+
+> **Changed a value? Restart.** Environment is read when a container is
+> created, not on every request. `npm run dev:stack:restart` (or `up -d`).
+
+Key groups (full annotated list in [`.env.example`](../.env.example)):
 
 | Key | Default | Notes |
 |---|---|---|
-| `WEB_PORT` / `API_PORT` / `DB_PORT` | `3000` / `4000` / `5432` | Ports on your machine |
+| `WEB_PORT` / `API_PORT` / `DB_PORT` | `3000` / `4000` / `5432` | Ports on your machine (Docker only) |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | `drillke` | Database inside the backend container |
-| `JWT_SECRET` | dev placeholder | **Change before exposing anything publicly** |
+| `JWT_SECRET` | dev placeholder | ≥ 32 chars; **change before exposing anything publicly** |
 | `CORS_ORIGINS` | `http://localhost:3000` | Must match the web origin |
+| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | `admin@drillke.local` / `change-me-now` | The first **admin** account. Password ≥ 10 chars or the seed refuses to run and no admin exists |
+| `SEED_ADMIN_RESET_PASSWORD` | `true` | Re-applies the password and admin role on boot. Set `false` after setup |
 | `SEED_ON_START` | `true` | Set `false` to stop re-seeding on every restart |
+| `YOUTUBE_API_KEY` | *(empty)* | **Required to add an artist from a YouTube link.** See [YouTube import](#youtube-import) |
+| `YOUTUBE_AUTO_PUBLISH` | `true` | Imported **music** uploads go straight into the public catalogue (`false` = leave them as drafts to review) |
+| `EMBED_WORKER` | `false` | Periodic new-upload sync inside the API process |
+| `YOUTUBE_WORKER_PAGES` | *(all)* | Optional cap, in pages of 50, on one periodic cycle per channel |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:4000` | Baked in at **build** time |
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` | Baked in at **build** time |
 
@@ -158,12 +189,122 @@ Compose reads `infra/.env` automatically for **both** stacks. Full list in
 > they are read when the container starts; in the production-shaped stack you
 > must rebuild the web image after changing them (`npm run stack:up`).
 
+### Signing in as the admin
+
+The seed creates the first admin from `SEED_ADMIN_EMAIL` /
+`SEED_ADMIN_PASSWORD`. Sign in at `/sign-in` (server route:
+`POST /api/auth/sign-in` with `{ email, password }`), then open `/admin`.
+
+- The password must be **at least 10 characters**. A shorter one makes
+  `prisma/seed.mjs` refuse to run; the entrypoint logs
+  `seed skipped … continuing` and the app still starts — with no admin.
+- An existing account keeps its old password unless
+  `SEED_ADMIN_RESET_PASSWORD=true`, which re-applies the password and the admin
+  role on every boot. Set it `true` while setting up, `false` afterwards.
+- To check what the API actually sees:
+  `docker exec drill-lyrics-key-dev-api printenv SEED_ADMIN_EMAIL`, and read
+  the two `Bootstrap` lines the API logs at start-up (API key configured or
+  missing, and which admin account the seed manages).
+
 Connect to the database from your host:
 
 ```powershell
 psql -h localhost -p 5432 -U drillke -d drillke
 # password: drillke (unless changed)
 ```
+
+---
+
+## YouTube import
+
+Adding an artist from a link is the acquisition path: **one link, the whole
+channel.** Paste a channel (`@handle`, `/channel/UC…`, `/c/`, `/user/`) or any
+video URL (the artist is the video's channel) into the admin screen.
+
+### What has to be true for it to work
+
+1. `YOUTUBE_API_KEY` is set in `.env`, and the api container was **re-created**
+   after you set it (`npm run dev:stack:restart`). Editing `.env` on a running
+   stack does nothing.
+2. The key belongs to a Google Cloud project with **YouTube Data API v3**
+   enabled. A key with the API disabled answers `403`.
+3. Quota is not exhausted. The daily allowance is 10,000 units; the importer
+   now batches (`videos.list` takes 50 ids per call, one unit), so a
+   1,000-upload channel costs roughly 40 units.
+
+Check the first two without opening the UI:
+
+```powershell
+docker exec drill-lyrics-key-dev-api printenv YOUTUBE_API_KEY   # must print a key
+# → the API also logs "YouTube Data API key: configured" at boot
+```
+
+And from the admin screen, use **Preview** on the link before adding it: it
+resolves the channel and lists its newest uploads without creating anything.
+
+### What the import does
+
+One link is the whole catalogue, and it is visible when the request returns.
+
+- Walks the channel's uploads playlist from newest to oldest, saving the walk's
+  position after every page. A failure part-way (quota, network) keeps
+  everything already imported and the next sync resumes at the page that failed.
+- Songs are matched by `youtubeVideoId`, so re-running a sync never duplicates
+  a song and the command is safe to repeat.
+- Uploads that carry YouTube's **Music** category, are topic-channel tracks, or
+  classify as a song from duration and wording are imported **and published**:
+  they appear on the artist page, on `/songs` and on the home shelves
+  (`YOUTUBE_AUTO_PUBLISH=false` keeps them as drafts instead).
+- Anything not clearly music (a vlog, a caption-shaped event post, a festival
+  or live-set recording) is still imported, as an `unclear` **review
+  candidate** under `/admin` → Song imports, and counted as skipped. It never
+  enters the public catalogue on its own. Shorts, live streams and sub-30-second
+  clips are not imported.
+- A **scheduled premiere** is handled by date, not by YouTube's live flag: once
+  its publish date has passed it is a released song and is imported. One still
+  waiting for its premiere is skipped and counted in `awaitingRelease`; the next
+  sync picks it up.
+- A run of non-music uploads does **not** stop the walk. It used to, which left
+  the rest of the channel unimported and kept re-reading the same page; the
+  filter now only decides what is published, and **Import every upload**
+  (`importAll`) adds the unclear uploads too.
+- When something is published, the API tells the web app to drop its cached
+  catalogue pages (`POST /api/revalidate`), so new songs show up immediately
+  instead of after the 2–5 minute page cache.
+- An artist's page exists from the moment they are added, even before the first
+  song arrives — the importer and the directory no longer hide it.
+
+### Buttons in /admin → Channels
+
+| Button | Does |
+|---|---|
+| **Sync whole channel** | Continue an unfinished walk from its saved page, or re-read a finished one for new uploads. |
+| **Re-check whole channel** | Start again from the newest upload (`restart: true`). Use it after fixing an import problem: songs are matched by video id, so nothing is duplicated. |
+| **Import every upload** | Shown when a channel had unclear uploads. Also imports those as review candidates. Never imports a short or a live stream. |
+| **See videos in the app** | Lists everything imported for that channel — published included — so "did the whole catalogue come in?" has an answer. |
+| **Review N drafts** | Jumps to the imported songs waiting for review. |
+
+Only one sync per channel can run at a time. A second request answers
+`409 This channel is already being imported` rather than racing the first one
+and corrupting its cursor.
+
+### New uploads after the artist is on file
+
+Set `EMBED_WORKER=true` to let the API poll every `INGEST_INTERVAL_MS` (default
+15 minutes) and pick up uploads published since the last sync. Without it,
+pressing **Sync whole channel** is the only way to see new uploads.
+
+### When the import looks wrong
+
+| Symptom | Cause / fix |
+|---|---|
+| `YouTube channel verification needs a YouTube Data API key` | `YOUTUBE_API_KEY` is empty in the container. Set it in the repo-root `.env`, `npm run dev:stack:restart`, re-check with `printenv`. |
+| `YouTube rejected the API key or its quota is exhausted` | Key wrong, API not enabled on the project, or the daily quota is spent. |
+| Import finishes with `0 new songs` | Every upload was already imported, or the channel is not a music channel and the filter rejected the rest. Try **Import every upload**. |
+| `This channel is already being imported` | A sync is still running. Watch it with `npm run dev:stack:logs`. |
+| Songs showed up, but none are public | Either `YOUTUBE_AUTO_PUBLISH=false`, or the uploads were not confirmed as music (they are drafts by design). Publish them from `/admin` → Song imports. |
+| One song of a release is missing | If it premiered as a scheduled video, it is imported once its publish date has passed. Press **Re-check whole channel**; the import summary reports anything still awaiting release. |
+| Artist added, but nothing in the app | Open `/admin` → Artists & sync → **See videos in the app**: an empty list means nothing was imported (check `lastError`). The public page shows drafts only once published. |
 
 ---
 
@@ -215,12 +356,16 @@ Run before every PR. They are what CI runs.
 | Symptom | Cause / fix |
 |---|---|
 | `npm run dev:stack` hangs on `[install] npm ci` | First run only. Later runs skip it. Check network/proxy if it stalls. |
+| Docker Desktop **Start** exits 1 / `context canceled` | Start re-starts every container in the project, including the one-shot `install` job. Use `npm run dev:stack:bg`, which re-creates what is missing. |
+| `[install] FAILED: could not install dependencies` | `npm ci` failed (network, registry auth, or a missing `package-lock.json`). The volume is left un-stamped so the next start retries; fix the cause and run `npm run dev:stack:install`. |
+| A setting from `.env` has no effect | The container was not re-created. `npm run dev:stack:restart`, then confirm with `docker exec drill-lyrics-key-dev-api printenv <KEY>`. |
+| Added an artist, but no songs appear | Check `YOUTUBE_API_KEY` reached the container and that the import was not paused. `/admin` → Channels shows the last error per channel. |
 | API restarts in a loop | `npm run dev:stack:logs` — usually a TypeScript error, a bad `DATABASE_URL`, or a failed migration. |
 | `/api/health/ready` returns 503 | PostgreSQL inside the backend container has not finished starting. Wait for `start_period` (60s) and re-check the logs. |
 | `web` never starts | It waits for `install`; check that job exited `0`. |
 | Edits do nothing (API) | `tsc --watch` needs polling over bind mounts — configured in `apps/api/tsconfig.json` under `watchOptions`. Don't remove it. |
 | Edits do nothing (web) | Confirm you are on the **dev** container (`drill-lyrics-key-dev-web`). The production-shaped web serves a compiled build and never hot-reloads. |
-| `port is already allocated` | Another stack or a local Postgres is running. Stop it (`npm run dev:stack:down` / `npm run stack:down`) or change `*_PORT` in `infra/.env`. |
+| `port is already allocated` | Another stack or a local Postgres is running. Stop it (`npm run dev:stack:down` / `npm run stack:down`) or change `*_PORT` in `.env`. |
 | Pages load but API calls fail | `NEXT_PUBLIC_API_URL` was wrong when built. Fix it, then `npm run stack:up` (rebuild) or restart the dev stack. |
 | `initdb: not found` | The image is stale — rebuild: `npm run dev:stack` / `npm run stack:up`. |
 | Want a clean slate | `npm run dev:stack:reset` then `npm run dev:stack`. |
@@ -241,6 +386,157 @@ npm run db:seed
 npm run dev                     # web → http://localhost:3000
 npm run dev:api                 # api → http://localhost:4000
 ```
+
+---
+
+## Content import / export
+
+Bulk lyrics authoring goes through Markdown files in `content/`.
+
+```powershell
+npm run content:export               # published songs → content/<artist>/<song>.md
+npm run content:import -- --dry-run  # report what would change, write nothing
+npm run content:import               # changed files → pending submissions
+```
+
+Rules worth knowing before running import:
+
+- Import **never publishes**. A changed file becomes a pending submission that a
+  moderator still has to approve, exactly like a contribution from the site.
+- A file that matches the published version produces nothing, so the command is
+  safe to run repeatedly.
+- A song is matched by `youtubeVideoId`. A file for a video that is not a
+  published catalogue song is skipped with a warning — import does not create
+  songs or artists.
+- Export is generated. Do not hand-edit the output and expect it to be preserved;
+  edit the lyrics through review, then re-export.
+
+Run against the Docker database with the dev stack:
+
+```powershell
+docker compose -f infra/docker-compose.dev.yml exec api npm run content:export
+```
+
+---
+
+## Email — notifications, password reset, deletion
+
+Review outcomes email the contributor when the submission is account-linked.
+Password reset and account deletion always email the account's address.
+
+| `MAIL_PROVIDER` | Behaviour |
+|---|---|
+| `mock` (default) | Logs a `mail to=… subject=…` line and the body at debug level; sends nothing |
+| `smtp` | Sends through `nodemailer` using the settings below |
+
+With the mock provider, the whole message is in the log — including the reset
+link, which is the only way to follow one locally:
+
+```powershell
+docker compose -f infra/docker-compose.dev.yml logs api | Select-String "reset-password"
+```
+
+### Configuring SMTP
+
+Set these in `.env` (dev) or your deploy environment (production), then
+recreate the API container — `docker compose ... up -d` picks up env changes;
+`restart` does not.
+
+| Variable | Notes |
+|---|---|
+| `MAIL_PROVIDER` | `smtp` |
+| `SMTP_HOST` | e.g. `smtp.postmarkapp.com`, `email-smtp.eu-west-1.amazonaws.com`, `mailhog` |
+| `SMTP_PORT` | Defaults to 587. `465` implies implicit TLS |
+| `SMTP_USER` / `SMTP_PASSWORD` | Both or neither. Omit both for a relay with no auth |
+| `MAIL_FROM` | Envelope sender, must contain an address: `DrillKe <no-reply@drillke.com>` |
+| `SMTP_SECURE` | Optional override of the port inference (`true` / `false`) |
+| `SMTP_ALLOW_INVALID_CERT` | `true` only for a self-signed local relay |
+| `NEXT_PUBLIC_SITE_URL` | Reset links are built from it — **must be the real public origin in production** |
+
+An incomplete configuration is refused, never silently ignored:
+
+- **Production:** `validateEnv` fails the boot with the missing keys listed.
+- **Any environment:** the API still starts, but `MailService.verify()` logs
+  `SMTP connection check failed: …` and each send returns
+  `delivered: false` with the reason.
+
+```powershell
+# Is mail configured and reachable?
+docker compose -f infra/docker-compose.dev.yml logs api | Select-String "Mail provider|SMTP connection"
+```
+
+### Testing the flows without a mail server
+
+Keep `MAIL_PROVIDER=mock` and read the link from the log:
+
+```powershell
+docker compose -f infra/docker-compose.dev.yml logs api | Select-String "reset-password/" | Select-Object -Last 1
+```
+
+Then open `http://localhost:3000/reset-password/<token>`. The link works once;
+opening it again says it is invalid, which is the intended behaviour.
+
+The same applies to confirmation links (sent on sign-up):
+
+```powershell
+docker compose -f infra/docker-compose.dev.yml logs api | Select-String "confirm-email/" | Select-Object -Last 1
+```
+
+Open `http://localhost:3000/confirm-email/<token>`. A second visit reports
+"already confirmed" — that is not an error.
+
+### Account page tools
+
+Signed-in users have three self-service actions on `/account`, and none of them
+needs an operator:
+
+| Action | Endpoint | Notes |
+|---|---|---|
+| Resend confirmation | `POST /api/auth/confirmation/resend` | Shown only while unconfirmed |
+| Download data | `GET /api/auth/export` | JSON; no passwords or token hashes |
+| Delete account | `POST /api/auth/delete-account` | Password-confirmed; audited |
+
+Unconfirmed accounts can still browse and submit lyrics — confirmation is a soft
+gate in v1, not a wall.
+
+`npm run smoke:account-flows` checks the API side of the same flows (non-
+enumerable request, token stored, forged token refused, superseded link, password-
+confirmed deletion, cascade) against a live stack, with no mail server and no
+credentials — it creates and deletes its own throwaway account.
+
+Every review notification is also recorded in the audit log as
+`lyrics.notification_sent`, `lyrics.notification_skipped` (guest submission) or
+`lyrics.notification_failed`, so a missing email is always traceable to a reason.
+Password reset and deletion write `account.password_reset_requested`,
+`account.password_reset_completed` and `account.deleted`.
+
+---
+
+## End-to-end tests
+
+The Playwright suite drives the real app, so it needs a running stack (Postgres,
+API and web) and the seeded admin account. It does **not** boot anything itself.
+
+```powershell
+npm run dev:stack                      # or npm run stack:up for the production-shaped stack
+npx playwright install chromium        # once per machine
+
+$env:E2E_ADMIN_PASSWORD = '<the seeded admin password>'
+npm run test:e2e
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `E2E_WEB_URL` | `http://localhost:3000` | Web origin under test |
+| `E2E_API_URL` | `http://localhost:4000` | API origin for fixtures and readiness |
+| `E2E_ADMIN_EMAIL` | `admin@drillke.local` | Seeded admin (`SEED_ADMIN_EMAIL`) |
+| `E2E_ADMIN_PASSWORD` | — | Seeded admin password; the suite **skips** without it |
+| `E2E_SONG_SLUG` | `masicka-update-official-video` | Published song the fixture submits against |
+
+Without a reachable API or without `E2E_ADMIN_PASSWORD`, every test skips with
+the reason rather than failing, so a machine without Docker still runs
+`npm run test` and `npm run typecheck` cleanly. `npm run test` (unit tests) does
+**not** run the e2e suite.
 
 ---
 

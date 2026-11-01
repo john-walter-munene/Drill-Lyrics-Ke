@@ -31,6 +31,23 @@
 #   Project name is pinned to `drill-lyrics-key-dev`, so containers, networks
 #   and volumes are namespaced and cannot collide with the production stack
 #   (`drill-lyrics-key`) or any other checkout.
+#
+# CONFIGURATION
+#   One env file: `../.env` at the repo root (copy it from .env.example).
+#   Compose reads it as the project dotenv file (the root package.json sits next
+#   to it) and `env_file` passes the SAME file into the containers, so every key
+#   present there reaches both the api and the web service — including keys this
+#   file does not name explicitly.
+#
+#   The `environment:` blocks below set three kinds of value only:
+#     * what compose knows and .env must not (DATABASE_URL to localhost INSIDE
+#       the api container, API_INTERNAL_URL=http://api:4000 on the network);
+#     * container topology (PORT, PATH, NODE_ENV);
+#     * `${VAR:-default}` reads, so a fresh checkout with no .env still starts.
+#   Anything else comes from .env via env_file. Do not add a duplicate here.
+#
+# CHANGED A VALUE?  `npm run dev:stack:restart` — environment is fixed at
+# container creation, so a restart of the process is not enough.
 
 name: drill-lyrics-key-dev
 
@@ -45,34 +62,64 @@ x-dev-base: &dev-base
 
 services:
   # ── One-shot: install dependencies into the shared volume ────────────────
+  #
+  # The install must still run on every `up`, because the named node_modules
+  # volume may be empty (fresh clone) — but it must never be the reason the
+  # STACK will not start:
+  #
+  #   * `restart: "no"` + a container that exits 0 keeps a record behind, which
+  #     is what makes Docker Desktop's Start button find it at all. Compose's
+  #     `start` re-starts EXISTING containers only (it never recreates), so if
+  #     this container were removed, `depends_on: install` in `api` would fail
+  #     with "api is missing dependency install" and Start would exit 1.
+  #   * `init: true` is NOT cosmetic here. Docker Desktop's Start runs an exec
+  #     against every container in the project. Without an init process nothing
+  #     reaps the exited install's child, so that exec hangs and Start aborts
+  #     with "context canceled". tini reaps and exits cleanly.
+  #
+  # Dependencies are installed only when the manifests changed, so a Start on a
+  # prepared volume costs a stamp comparison.
   install:
     <<: *dev-base
     working_dir: /app
+    restart: "no"
+    init: true
     environment:
       NODE_ENV: development
     command:
       - sh
       - -c
       - |
-        set -e
         mkdir -p node_modules
         stamp="node_modules/.drillke-stamp"
-        new_hash="$$(cat package-lock.json package.json apps/api/package.json apps/web/package.json packages/shared/package.json | sha256sum | cut -d' ' -f1)"
+        if [ ! -f package-lock.json ]; then
+          echo "[install] WARNING: package-lock.json missing — run npm install on the host first" >&2
+          exit 1
+        fi
+        new_hash="$$(cat package-lock.json package.json apps/api/package.json apps/web/package.json packages/shared/package.json prisma/schema.prisma | sha256sum | cut -d' ' -f1)"
         old_hash="$$(cat "$$stamp" 2>/dev/null || true)"
         if [ "$$old_hash" = "$$new_hash" ] && [ -d node_modules/@drillke ]; then
           echo "[install] dependencies up to date"
           exit 0
         fi
         echo "[install] npm ci ..."
-        npm ci --no-audit --no-fund
-        npx prisma generate --schema prisma/schema.prisma
-        npm run build -w @drillke/shared
+        if npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-maxtimeout=120000; then
+          npx prisma generate --schema prisma/schema.prisma && npm run build -w @drillke/shared
+        else
+          # A half-installed volume is worse than none: api/web would start
+          # against a partial tree and die on an unrelated "Cannot find module".
+          # Say what happened and leave the stamp unset so the next start retries.
+          echo "[install] FAILED: could not install dependencies (network? registry auth?)." >&2
+          echo "[install] Fix the cause, then: npm run dev:stack:install" >&2
+          exit 1
+        fi
         echo "$$new_hash" > "$$stamp"
         echo "[install] ready"
 
   # ── Backend: API + PostgreSQL (hot reload) ───────────────────────────────
   api:
     <<: *dev-base
+    init: true
     # The dev image ships PostgreSQL too, so the topology matches production.
     # Reuse the production entrypoint to init + start the database.
     container_name: drill-lyrics-key-dev-api
@@ -81,6 +128,11 @@ services:
     working_dir: /app
     entrypoint: ["/app/infra/docker-entrypoint.sh"]
     command: ["npm", "run", "start:dev", "--prefix", "apps/api"]
+    # Values not already set below come from the root .env. The explicit
+    # `environment` block wins over env_file, and carries the compose-network
+    # defaults (DATABASE_URL to localhost inside the container).
+    env_file:
+      - ../.env
     environment:
       NODE_ENV: development
       PORT: "4000"
@@ -91,16 +143,15 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-drillke}
       POSTGRES_USER: ${POSTGRES_USER:-drillke}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-drillke}
-      # Migrations are applied once by the entrypoint on boot; the `migrate`
-      # job is kept as a convenience for re-seeding without a restart.
-      SEED_ON_START: ${SEED_ON_START:-true}
-      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@drillke.local}
-      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-change-me-now}
-      JWT_SECRET: ${JWT_SECRET:-local-dev-only-secret-change-before-deploying-0000}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      LOG_LEVEL: ${LOG_LEVEL:-debug}
-      EMBED_WORKER: ${EMBED_WORKER:-false}
-      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      # The web app on the compose network, for the cache-purge call after an
+      # import. NEXT_PUBLIC_SITE_URL is the BROWSER origin (localhost:3000),
+      # which from inside this container would be the api itself.
+      WEB_INTERNAL_URL: http://web:3000
+      # Everything else (SEED_*, JWT_SECRET, CORS_ORIGINS, LOG_LEVEL, the
+      # THROTTLE_* budget, YOUTUBE_*, MAIL_*/SMTP_*, NEXT_PUBLIC_*) comes from
+      # the root .env through `env_file` above. Repeating a key here would
+      # shadow the .env value with this file's default — which is how a
+      # SEED_ADMIN_RESET_PASSWORD=false in .env was silently overridden.
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     ports:
@@ -122,13 +173,18 @@ services:
   # ── Frontend: Next.js dev server (hot reload) ────────────────────────────
   web:
     <<: *dev-base
+    init: true
     container_name: drill-lyrics-key-dev-web
     working_dir: /app/apps/web
+    env_file:
+      - ../.env
     environment:
       NODE_ENV: development
       NEXT_TELEMETRY_DISABLED: "1"
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
       NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      # Docker DNS for server components; the browser uses NEXT_PUBLIC_API_URL.
+      API_INTERNAL_URL: http://api:4000
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     ports:
@@ -141,6 +197,12 @@ services:
     depends_on:
       install:
         condition: service_completed_successfully
+      # The web server renders pages server-side from the API. Without this, a
+      # Start on a stopped stack boots web first, every request logs
+      # `connect ECONNREFUSED api:4000`, and the page shows an error until the
+      # API catches up.
+      api:
+        condition: service_healthy
     command: ["npx", "next", "dev", "-p", "3000", "-H", "0.0.0.0"]
 
 volumes:

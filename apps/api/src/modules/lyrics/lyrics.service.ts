@@ -1,30 +1,79 @@
-import { Injectable, NotImplementedException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, UnprocessableEntityException } from '@nestjs/common';
+import { parseLyricsDocument, parseLyricsText } from '@drillke/shared';
 import { PrismaService } from '../../prisma.service';
+import { looksLikeMarkdownDocument } from '../../common/submission-shape';
 import type { CreateSubmissionDto } from './dto/create-submission.dto';
 
-/**
- * Lyrics submission + review logic.
- *
- * Phase 1: parse Markdown with `@drillke/shared`, reject with 422 field errors,
- * then persist a `LyricsSubmission` with status `pending`.
- * Phase 2: approval creates an immutable `LyricVersion` (version = max + 1) and
- * flips its `published` flag; previous versions stay queryable for rollback.
- */
 @Injectable()
 export class LyricsService {
   constructor(private readonly prisma: PrismaService) { }
 
-  createSubmission(dto: CreateSubmissionDto) {
-    void dto;
-    throw new NotImplementedException('Lyrics submission lands in Phase 1');
+  async createSubmission(dto: CreateSubmissionDto, user?: { id: string; displayName: string }) {
+    // Validate with the parser that matches the shape of the body, so a Markdown
+    // document is checked for frontmatter and annotations and a text body is not
+    // rejected for lacking them. The raw body is stored either way.
+    //
+    // The error envelope is built as `{ message, errors }` on purpose. The shared
+    // parsers return a per-field map (`{ body: [...], frontmatter: [...] }`), and
+    // passing that object straight to `UnprocessableEntityException` made Nest
+    // treat it as the response body — so the client got the fields at the TOP
+    // level (`"timestamps": [...]`) under a bare "Unprocessable Entity" and the
+    // documented `errors` array was never sent.
+    const invalid = (errors: Record<string, string[]>) => {
+      const first = Object.values(errors).flat()[0];
+      return new UnprocessableEntityException({
+        message: first ?? 'The lyrics could not be read',
+        errors,
+      });
+    };
+    if (looksLikeMarkdownDocument(dto.markdown)) {
+      const parsed = parseLyricsDocument(dto.markdown);
+      if (!parsed.ok) throw invalid(parsed.errors);
+    } else {
+      const parsed = parseLyricsText(dto.markdown);
+      if (!parsed.ok) throw invalid(parsed.errors);
+    }
+
+    const song = await this.prisma.song.findFirst({
+      where: { id: dto.songId, status: 'published' },
+      select: { id: true },
+    });
+    if (!song) throw new NotFoundException('Choose a published song from the catalogue');
+
+    const submission = await this.prisma.lyricsSubmission.create({
+      data: {
+        songId: song.id,
+        userId: user?.id ?? null,
+        markdown: dto.markdown,
+        note: dto.note?.trim() || undefined,
+        creditPublicly: Boolean(user && dto.creditPublicly),
+        contributorName: user && dto.creditPublicly ? user.displayName : null,
+        status: 'pending',
+      },
+      select: { id: true, status: true },
+    });
+    return submission;
   }
 
-  mySubmissions() {
-    return { items: [], total: 0, page: 1, pageSize: 20, totalPages: 1 };
+  async mySubmissions(userId?: string) {
+    if (!userId) throw new UnauthorizedException('Sign in to view your submissions');
+    const items = await this.prisma.lyricsSubmission.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 100, include: { song: { select: { title: true, slug: true } } } });
+    return { items, total: items.length, page: 1, pageSize: 100, totalPages: 1 };
   }
 
-  submissionById(id: string) {
-    void id;
-    throw new NotImplementedException('Submission lookup lands in Phase 1');
+  async submissionById(id: string, userId?: string) {
+    if (!userId) throw new UnauthorizedException('Sign in to view your submission');
+    const item = await this.prisma.lyricsSubmission.findFirst({ where: { id, userId }, include: { song: { select: { title: true, slug: true } } } });
+    if (!item) throw new NotFoundException('Submission not found');
+    return item;
+  }
+
+  async topContributors() {
+    const rows = await this.prisma.lyricsSubmission.groupBy({
+      by: ['contributorName'],
+      where: { creditPublicly: true, status: 'published', contributorName: { not: null } },
+      _count: { _all: true }, orderBy: { _count: { id: 'desc' } }, take: 10,
+    });
+    return { items: rows.filter((row) => row.contributorName).map((row) => ({ name: row.contributorName, publishedContributions: row._count._all })) };
   }
 }

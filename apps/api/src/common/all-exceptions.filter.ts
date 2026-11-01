@@ -25,6 +25,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: string | string[] = 'Internal server error';
     let error = 'InternalServerError';
+    // Extra payload alongside `message` (e.g. the parser's `errors` array for a
+    // 422). Nest clients read these fields, so a filter that rebuilt the body
+    // from `message` alone silently dropped them.
+    let extra: Record<string, unknown> = {};
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -32,9 +36,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
       if (typeof body === 'string') {
         message = body;
       } else if (body && typeof body === 'object') {
-        const b = body as { message?: string | string[]; error?: string };
-        message = b.message ?? exception.message;
-        error = b.error ?? exception.name;
+        const { message: bodyMessage, error: bodyError, ...rest } = body as {
+          message?: string | string[];
+          error?: string;
+        };
+        message = bodyMessage ?? exception.message;
+        error = bodyError ?? exception.name;
+        extra = rest;
       }
     } else {
       // Unexpected error: log the detail, return an opaque message.
@@ -48,6 +56,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       statusCode: status,
       error,
       message,
+      ...extra,
       path: req?.url,
       timestamp: new Date().toISOString(),
     });

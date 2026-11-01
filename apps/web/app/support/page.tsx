@@ -1,94 +1,185 @@
-import Link from 'next/link';
-import { pageMetadata } from '../../lib/seo';
+import Link from "next/link";
+import { pageMetadata } from "../../lib/seo";
 
 export const metadata = pageMetadata({
-  title: 'Support our work',
+  title: "Support the project",
   description:
-    'DrillKe is free and independent. Here is where the money would go, and every way to help right now — including lending your ear to the catalogue.',
-  path: '/support',
+    "Help keep Drill Lyrics KE free and independent — what the project is for, how it is funded and how to get involved.",
+  path: "/support",
 });
 
-export const revalidate = 3600;
+const BMC_URL = "https://buymeacoffee.com/Munene254_";
 
-const WAYS = [
+const buttonClass = "about-page__button";
+
+const principles = [
   {
-    title: 'Contribute lyrics',
-    body: 'The fastest way to help is to time a song you know, or correct one that is wrong.',
-    href: '/submit',
-    cta: 'Submit lyrics',
+    id: "purpose",
+    symbol: "♪",
+    title: "What it's for",
+    text: "Give Kenyan drill a home where its music, lyrics, artists, and stories can be discovered and documented.",
   },
   {
-    title: 'Report a mistake',
-    body: 'Wrong bar, wrong timestamp, wrong annotation — every song page has a report path.',
-    href: '/songs',
-    cta: 'Find a song',
+    id: "funding",
+    symbol: "≋",
+    title: "How it's funded",
+    text: "Drill Lyrics KE is independent and free to use. There are no paywalls, and the project runs on community support.",
   },
   {
-    title: 'Tell an artist',
-    body: 'If you know someone whose songs belong here, send them the link.',
-    href: '/about',
-    cta: 'How it works',
+    id: "involved",
+    symbol: "◎",
+    title: "How to get involved",
+    text: "Chip in with a coffee, contribute lyrics, or help build the platform. Every bit keeps the scene documented.",
   },
 ];
 
 export default function SupportPage() {
   return (
-    <main className="container">
-      <h1>Support our work</h1>
-      <p className="muted" style={{ maxWidth: 680, fontSize: '1.05rem' }}>
-        DrillKe is free, independent and open source. There are no ads and we take no commission in
-        v1. The platform is funded by the people who want it to exist.
-      </p>
+    <main className="about-page container" aria-labelledby="support-heading">
+      <div>
+        <header className="about-page__header">
+          <p className="about-page__eyebrow">Support the project</p>
 
-      <section style={{ marginTop: '2rem' }}>
-        <h2 style={{ fontSize: '1.1rem' }}>Where the money goes</h2>
-        <div className="panel" style={{ maxWidth: 680 }}>
-          <ul style={{ margin: 0, paddingLeft: '1.1rem', lineHeight: 1.9 }} className="muted">
-            <li>Hosting and a managed database — the largest recurring cost.</li>
-            <li>Review time, so contributions get published quickly.</li>
-            <li>Transcription and timestamping for songs the community cannot cover alone.</li>
-          </ul>
-        </div>
-        <p className="muted" style={{ fontSize: '0.85rem', maxWidth: 680 }}>
-          Funding rails are not live yet. Until they are, contributions of time are worth more
-          than money.
-        </p>
-      </section>
+          <h1 id="support-heading">
+            Help keep it free. <span>Help keep it independent.</span>
+          </h1>
 
-      <section style={{ marginTop: '2.5rem' }}>
-        <h2 style={{ fontSize: '1.1rem' }}>Ways to help now</h2>
-        <ul
-          style={{
-            listStyle: 'none',
-            padding: 0,
-            margin: 0,
-            display: 'grid',
-            gap: '1rem',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          }}
+          <p className="about-page__intro">
+            Drill Lyrics KE is an open-source music discovery and lyrics
+            platform built around Kenyan drill. It stays free and independent
+            because of people who care about the scene and want to see it
+            documented properly.
+          </p>
+
+          <p className="muted">
+            If the project has helped you find a new artist or finally
+            understand a line, here are a few ways to give something back.
+          </p>
+
+          <div className="about-page__actions">
+            <a
+              href={BMC_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${buttonClass} about-page__button--primary`}
+            >
+              Buy me a coffee ☕ <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        </header>
+
+        <section
+          className="about-page__principles"
+          aria-label="About supporting the project"
         >
-          {WAYS.map((way) => (
-            <li key={way.title} className="panel">
-              <h3 style={{ margin: '0 0 0.35rem', fontSize: '0.95rem' }}>{way.title}</h3>
-              <p className="muted" style={{ margin: '0 0 0.9rem', fontSize: '0.9rem' }}>
-                {way.body}
-              </p>
-              <Link href={way.href} className="btn btn--sm">
-                {way.cta}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </section>
+          {principles.map((principle) => (
+            <article
+              className="panel about-page__principle"
+              key={principle.id}
+            >
+              <span className="about-page__symbol" aria-hidden="true">
+                {principle.symbol}
+              </span>
 
-      <section style={{ marginTop: '2.5rem', maxWidth: 680 }}>
-        <h2 style={{ fontSize: '1.1rem' }}>Is DrillKe a business?</h2>
-        <p className="muted">
-          Eventually, yes — artist storefronts and merch are on the roadmap, with a transparent
-          commission. But the first version makes no money at all. It exists to prove that a
-          better way to experience Kenyan drill is worth having.
-        </p>
-      </section>
+              <h2>{principle.title}</h2>
+              <p className="muted">{principle.text}</p>
+            </article>
+          ))}
+        </section>
+
+        <div className="about-page__columns">
+          <section className="panel about-page__section">
+            <h2>Buy me a coffee</h2>
+
+            <p>
+              A small contribution helps cover hosting and the time it takes
+              to keep the library growing, from adding songs to reviewing
+              community submissions.
+            </p>
+
+            <p className="muted">
+              Music videos are embedded from YouTube. We reference and
+              document music rather than downloading or rehosting artists'
+              recordings.
+            </p>
+
+            <a
+              href={BMC_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${buttonClass} about-page__button--primary`}
+            >
+              Buy me a coffee <span aria-hidden="true">↗</span>
+            </a>
+          </section>
+
+          <section className="panel about-page__section">
+            <h2>Other ways to help</h2>
+
+            <p>
+              Not able to chip in financially? Contributing lyrics, suggesting
+              corrections, and sharing the platform with other listeners all
+              make a real difference.
+            </p>
+
+            <p className="muted">
+              Contributions go through editorial review before publication, so
+              the library stays trustworthy as it grows.
+            </p>
+
+            <Link href="/submit" className={buttonClass}>
+              Contribute lyrics <span aria-hidden="true">→</span>
+            </Link>
+          </section>
+        </div>
+
+        <section className="panel about-page__community">
+          <div>
+            <p className="about-page__eyebrow">Built in public</p>
+
+            <h2>A project the community can help build.</h2>
+
+            <p className="muted">
+              Drill Lyrics KE is also an open-source software project.
+              Developers, designers, writers, music enthusiasts, and
+              listeners are welcome to help improve the platform and
+              contribute to its growing library.
+            </p>
+          </div>
+
+          <div className="about-page__actions">
+            <a
+              href="https://github.com/john-walter-munene/Drill-Lyrics-Ke"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${buttonClass} about-page__button--primary`}
+            >
+              Explore on GitHub <span aria-hidden="true">↗</span>
+            </a>
+
+            <Link href="/developers" className={buttonClass}>
+              Developer guide <span aria-hidden="true">→</span>
+            </Link>
+          </div>
+        </section>
+
+        <nav
+          className="about-page__links"
+          aria-label="Explore Drill Lyrics KE"
+        >
+          <Link href="/songs" className="btn btn--primary">
+            Explore songs
+          </Link>
+
+          <Link href="/artists" className="btn">
+            Discover artists
+          </Link>
+
+          <Link href="/legal/rights" className="btn">
+            Our rights policy
+          </Link>
+        </nav>
+      </div>
     </main>
   );
 }

@@ -12,11 +12,15 @@
     "dev:api": "npm run start:dev --workspace=@drillke/api",
     "build": "npm run build -w @drillke/shared && npm run build -w @drillke/api && npm run build -w @drillke/web",
     "start": "npm run start -w @drillke/api",
-    "lint": "npm run lint --workspaces --if-present",
+    "lint": "eslint . --max-warnings 0",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test:shared && npm run test:api",
+    "test": "npm run test:shared && npm run test:api && npm run test:web",
     "test:shared": "node --experimental-strip-types --test \"packages/shared/src/*.test.ts\"",
-    "test:api": "node --experimental-strip-types --test \"apps/api/src/common/*.test.ts\"",
+    "test:api": "node --experimental-strip-types --test \"apps/api/src/**/*.test.ts\"",
+    "test:web": "node --experimental-strip-types --test \"apps/web/app/**/*.test.ts\"",
+    "smoke:sync-estimate": "node scripts/smoke-sync-estimate.mjs",
+    "smoke:account-flows": "node scripts/smoke-account-flows.mjs",
+    "smoke:confirmation-export": "node scripts/smoke-confirmation-export.mjs",
     "test:e2e": "playwright test",
     "dev:stack": "docker compose -f infra/docker-compose.dev.yml up --build",
     "dev:stack:bg": "docker compose -f infra/docker-compose.dev.yml up --build -d",
@@ -24,6 +28,8 @@
     "dev:stack:reset": "docker compose -f infra/docker-compose.dev.yml down -v",
     "dev:stack:logs": "docker compose -f infra/docker-compose.dev.yml logs -f api web",
     "dev:stack:ps": "docker compose -f infra/docker-compose.dev.yml ps",
+    "dev:stack:restart": "docker compose -f infra/docker-compose.dev.yml up -d --force-recreate api web",
+    "dev:stack:install": "docker compose -f infra/docker-compose.dev.yml run --rm --no-deps install",
     "stack:up": "docker compose -f infra/docker-compose.yml up -d --build",
     "stack:start": "docker compose -f infra/docker-compose.yml start",
     "stack:down": "docker compose -f infra/docker-compose.yml down",
@@ -37,15 +43,21 @@
     "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "db:seed": "node prisma/seed.mjs",
-    "db:reset": "prisma migrate reset --schema prisma/schema.prisma --force && npm run db:seed"
+    "db:reset": "prisma migrate reset --schema prisma/schema.prisma --force && npm run db:seed",
+    "content:export": "node --experimental-strip-types scripts/content.mjs export",
+    "content:import": "node --experimental-strip-types scripts/content.mjs import"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.49.0",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "prisma": "^6.2.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.72.1"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3"

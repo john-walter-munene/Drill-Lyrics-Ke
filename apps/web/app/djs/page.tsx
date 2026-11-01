@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { listDjs } from '../../lib/api';
+import { listDjs } from '../../api';
 import { pageMetadata } from '../../lib/seo';
 
 export const metadata: Metadata = pageMetadata({
@@ -21,11 +21,13 @@ export default async function DjsPage({
 
   return (
     <main className="container">
-      <h1>DJs</h1>
-      <p className="muted" style={{ maxWidth: 620 }}>
-        The people moving the scene. Mixes stay on the DJ&apos;s own platform — we link out and
-        credit them.
-      </p>
+      <header className="page-head">
+        <h1>DJs</h1>
+        <p className="muted">
+          The people moving the scene. Mixes stay on the DJ&apos;s own platform — we link out and
+          credit them.
+        </p>
+      </header>
 
       {data.items.length === 0 ? (
         <p className="muted">The DJ directory is being built.</p>

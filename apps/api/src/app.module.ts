@@ -8,6 +8,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { PrismaService } from './prisma.service';
 import { globalThrottleRule } from './common/throttling';
 import { AuthZModule, RolesGuard } from './common/roles.guard';
+import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
 import { ArtistsModule } from './modules/artists/artists.module';
@@ -49,6 +50,8 @@ import { YoutubeSyncModule } from './workers/youtube-sync.module';
   providers: [
     PrismaService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Attaches an optional account identity before RolesGuard evaluates routes.
+    { provide: APP_GUARD, useExisting: JwtAuthGuard },
     // Use the AuthZModule-provided instance: its `Reflector` is constructed
     // explicitly, so the guard works from root (APP_GUARD) scope.
     { provide: APP_GUARD, useExisting: RolesGuard },

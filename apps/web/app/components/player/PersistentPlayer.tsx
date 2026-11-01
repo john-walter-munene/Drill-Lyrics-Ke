@@ -10,7 +10,7 @@ import PlayerSurface from './PlayerSurface';
 export default function PersistentPlayer() {
   const { track } = usePlayer();
   return (
-    <div style={{ maxWidth: 'var(--max-width)', margin: '0 auto', padding: '1.5rem 1.5rem 0' }}>
+    <div className="persistent-player">
       <PlayerSurface track={track} />
     </div>
   );

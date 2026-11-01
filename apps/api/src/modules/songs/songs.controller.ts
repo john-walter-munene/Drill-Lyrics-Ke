@@ -18,6 +18,15 @@ export class SongsController {
     return this.songs.list({ q, artist, page });
   }
 
+  /**
+   * Home-page shelves. Declared **before** `:slug` on purpose: Nest matches in
+   * declaration order, so the reverse would treat "feeds" as a song slug.
+   */
+  @Get('feeds')
+  feeds() {
+    return this.songs.feeds();
+  }
+
   @Get(':slug')
   bySlug(@Param('slug') slug: string) {
     return this.songs.bySlug(slug);
