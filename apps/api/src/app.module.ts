@@ -18,6 +18,7 @@ import { SearchModule } from './modules/search/search.module';
 import { DjsModule } from './modules/djs/djs.module';
 import { PodcastsModule } from './modules/podcasts/podcasts.module';
 import { EventsModule } from './modules/events/events.module';
+import { CompetitionsModule } from './modules/competitions/competitions.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { YoutubeSyncModule } from './workers/youtube-sync.module';
@@ -43,6 +44,7 @@ import { YoutubeSyncModule } from './workers/youtube-sync.module';
     DjsModule,
     PodcastsModule,
     EventsModule,
+    CompetitionsModule,
     ReportsModule,
     AdminModule,
     YoutubeSyncModule,

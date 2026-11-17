@@ -91,7 +91,9 @@ export default async function HomePage() {
               <h2 id="synced-title">Synced this week.</h2>
               <p className="muted">Lyrics that follow the track line by line — press play and read along.</p>
             </div>
-            <Link href="/songs" className="btn btn--sm">All songs</Link>
+            {/* The shelf is six songs; this is the way to the rest of the
+                timed catalogue, and the only place the sort is discoverable. */}
+            <Link href="/songs?sync=synced&sort=recently-synced" className="btn btn--sm">See all synced</Link>
           </div>
           <SongList songs={syncedShelf} />
         </section>

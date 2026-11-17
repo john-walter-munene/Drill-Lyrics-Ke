@@ -1,4 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="76" fill="#ff4d1c"/>
-  <text x="48" y="396" font-family="system-ui,sans-serif" font-weight="900" font-size="380" fill="#0c0b0a">D</text>
+  <rect width="512" height="512" rx="112" fill="#0c0b0a"/>
+  <!-- AppKINGS crown: three peaks on a solid band, floating diamond above. -->
+  <g fill="#ff4d1c">
+    <path d="M256 18 292 70 256 122 220 70Z"/>
+    <path d="M40 150 118 300 180 196 256 340 332 196 394 300 472 150 448 400 64 400Z"/>
+  </g>
+  <rect x="96" y="344" width="320" height="20" fill="#0c0b0a"/>
+  <!-- The logo's four-colour bar. -->
+  <g>
+    <rect x="64" y="437" width="85" height="40" rx="9" fill="#f5b400"/>
+    <rect x="165" y="437" width="85" height="40" rx="9" fill="#e8401c"/>
+    <rect x="266" y="437" width="85" height="40" rx="9" fill="#7ab800"/>
+    <rect x="367" y="437" width="85" height="40" rx="9" fill="#1a9ad6"/>
+  </g>
 </svg>

@@ -9,13 +9,22 @@ import { SongsService } from './songs.service';
 export class SongsController {
   constructor(private readonly songs: SongsService) { }
 
+  /**
+   * `?q= &artist= &sync=synced|unsynced &language= &sort= &page=`
+   *
+   * Validated in `parseCatalogueQuery` (shared), so an unknown `sort` or
+   * `language` comes back as a 400 listing every bad field at once.
+   */
   @Get()
   list(
     @Query('q') q?: string,
     @Query('artist') artist?: string,
+    @Query('sync') sync?: string,
+    @Query('language') language?: string,
+    @Query('sort') sort?: string,
     @Query('page') page?: string,
   ) {
-    return this.songs.list({ q, artist, page });
+    return this.songs.list({ q, artist, sync, language, sort, page });
   }
 
   /**

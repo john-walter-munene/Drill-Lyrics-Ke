@@ -273,7 +273,16 @@ export default function PlayerSurface({ track }: { track: PlayerTrack | null }) 
   }, [currentMs, durationMs, next, playPause, previous, volume]);
 
   return (
-    <section className={`player-shell player-shell--${playbackMode}`} aria-label="Music player">
+    <section
+      className={[
+        'player-shell',
+        `player-shell--${playbackMode}`,
+        track ? '' : 'player-shell--idle',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      aria-label="Music player"
+    >
       {track ? (
         <>
           <div className="player-shell__mode-switch" role="group" aria-label="Playback view">
@@ -339,14 +348,23 @@ export default function PlayerSurface({ track }: { track: PlayerTrack | null }) 
                 </span>
               </div>
 
-              <button
-                type="button"
-                className="btn btn--sm"
-                aria-expanded={controlsOpen}
-                onClick={() => setControlsOpen((open) => !open)}
-              >
-                {controlsOpen ? 'Hide controls' : 'More controls'}
-              </button>
+              <div className="player-shell__bar-actions">
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  aria-expanded={controlsOpen}
+                  onClick={() => setControlsOpen((open) => !open)}
+                >
+                  {controlsOpen ? 'Hide controls' : 'More controls'}
+                </button>
+                <button className="btn btn--sm" type="button" onClick={() => setQueueOpen(!queueOpen)} aria-expanded={queueOpen}>
+                  Queue · {queue.length}
+                </button>
+                {openOnYouTube ? (
+                  <a className="btn btn--sm" href={openOnYouTube} target="_blank" rel="noreferrer">YouTube ↗</a>
+                ) : null}
+              </div>
+
               {controlsOpen ? (
                 <TransportControls
                   currentMs={currentMs}
@@ -372,14 +390,6 @@ export default function PlayerSurface({ track }: { track: PlayerTrack | null }) 
                   onRate={changeRate}
                 />
               ) : null}
-              <div className="player-shell__secondary-controls">
-                <button className="btn btn--sm" type="button" onClick={() => setQueueOpen(!queueOpen)} aria-expanded={queueOpen}>
-                  Queue · {queue.length}
-                </button>
-                {openOnYouTube ? (
-                  <a className="btn btn--sm" href={openOnYouTube} target="_blank" rel="noreferrer">YouTube ↗</a>
-                ) : null}
-              </div>
             </div>
           </div>
           {queueOpen ? (

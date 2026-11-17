@@ -34,7 +34,8 @@ async function bootstrap() {
 
   // CORS: allow the configured origins only (comma-separated, trailing-slash
   // and whitespace tolerant). No preview-domain wildcard — lock down by default.
-  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3000')
+  // The fallback is DrillKe's own web port (see .env `WEB_PORT`), not 3000.
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3100')
     .split(',')
     .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean);

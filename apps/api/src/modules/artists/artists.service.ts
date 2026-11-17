@@ -234,6 +234,7 @@ export class ArtistsService {
         releaseDate: song.releaseDate?.toISOString().slice(0, 10) ?? null,
         durationMs: song.durationMs,
         status: song.status,
+        syncedAt: song.syncedAt?.toISOString() ?? null,
         lyrics: {
           syncStatus: song.versions[0]?.syncStatus ?? 'unsynchronized',
           versionId: song.versions[0]?.id ?? null,

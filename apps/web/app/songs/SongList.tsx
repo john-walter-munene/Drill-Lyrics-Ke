@@ -21,7 +21,10 @@ export default function SongList({ songs }: { songs: Song[] }) {
         const isPlaying = isCurrent && playbackState === 'playing';
         const isBuffering = isCurrent && playbackState === 'buffering';
         return (
-          <li key={song.slug} className="panel song-list-item">
+          <li
+            key={song.slug}
+            className={`panel song-list-item${isCurrent ? ' song-list-item--current' : ''}`}
+          >
             <img
               className="song-list-item__artwork"
               src={`https://i.ytimg.com/vi/${song.youtubeVideoId}/mqdefault.jpg`}
@@ -43,7 +46,13 @@ export default function SongList({ songs }: { songs: Song[] }) {
                 ) : null}
               </p>
             </div>
-            <button type="button" className="btn btn--primary btn--sm" disabled={isPlaying || isBuffering} onClick={() => play(item, queue, true)}>
+            <button
+              type="button"
+              className={`btn btn--sm ${isPlaying || isBuffering ? '' : 'btn--primary'}`}
+              disabled={isPlaying || isBuffering}
+              aria-current={isCurrent ? 'true' : undefined}
+              onClick={() => play(item, queue, true)}
+            >
               {isPlaying ? 'Playing' : isBuffering ? 'Loading…' : '▶ Play'}
             </button>
           </li>

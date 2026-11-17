@@ -1,3 +1,7 @@
+import {
+  catalogueSearchParams,
+  type CatalogueParams,
+} from '@drillke/shared';
 import type {
   Artist,
   Dj,
@@ -8,16 +12,23 @@ import type {
   PodcastEpisode,
   SearchResults,
   Song,
+  StageTally,
 } from '@drillke/shared';
 
-/** Browser-facing API origin. Exported: credentials must be handled there. */
-export const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+/**
+ * Browser-facing API origin. Exported: credentials must be handled there.
+ *
+ * The fallback is DrillKe's published API port (see .env `API_PORT`), not the
+ * generic 4000, so a host run without NEXT_PUBLIC_API_URL still cannot talk to
+ * another project's API.
+ */
+export const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4100';
 const SERVER_API_URL = process.env.API_INTERNAL_URL ?? PUBLIC_API_URL;
 // Server components run inside the web container and must use Docker DNS;
 // browser submissions use the host-reachable public URL.
 export const API_URL = typeof window === 'undefined' ? SERVER_API_URL : PUBLIC_API_URL;
 export const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
+  process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3100';
 
 // --- Session token -----------------------------------------------------------
 //
@@ -185,7 +196,7 @@ export async function exportAccountData(): Promise<{ ok: true; filename: string 
 }
 
 export async function apiRequest<T>(
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<{ ok: true; data: T } | { ok: false; status: number; message: string | string[] }> {
@@ -280,15 +291,17 @@ const EMPTY_PAGE: Page<never> = {
 
 // --- Catalogue ---------------------------------------------------------------
 
+/**
+ * The catalogue reads the same query contract the API validates
+ * (`catalogueSearchParams` in `@drillke/shared`), so a link the web app builds
+ * is exactly one the API understands.
+ */
 export async function listSongs(
-  params: { q?: string; artist?: string; page?: number } = {},
+  params: CatalogueParams = {},
   revalidate = 120,
 ) {
-  const qs = new URLSearchParams();
-  if (params.q) qs.set('q', params.q);
-  if (params.artist) qs.set('artist', params.artist);
-  if (params.page) qs.set('page', String(params.page));
-  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const qs = catalogueSearchParams(params);
+  const suffix = qs ? `?${qs}` : '';
   return (await getJson<Page<Song>>(`/api/songs${suffix}`, revalidate)) ?? EMPTY_PAGE;
 }
 
@@ -404,3 +417,91 @@ export async function search(q: string): Promise<SearchResults> {
 export async function listSitemapPaths(): Promise<{ path: string; updatedAt: string }[]> {
   return (await getJson<{ path: string; updatedAt: string }[]>(`/api/sitemap`, 3600)) ?? [];
 }
+
+// --- Competitions ------------------------------------------------------------
+
+export interface CompetitionSummary {
+  slug: string;
+  title: string;
+  description: string | null;
+  organizer: string | null;
+  status: string;
+  stages: { kind: string; status: string; title: string }[];
+}
+
+export interface CompetitionEntryView {
+  id: string;
+  slug: string;
+  title: string;
+  curator: string;
+  description: string | null;
+  imageUrl: string | null;
+}
+
+export interface CompetitionDetail {
+  slug: string;
+  title: string;
+  description: string | null;
+  organizer: string | null;
+  status: string;
+  voterScope: string;
+  allowVoteChange: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+  entries: CompetitionEntryView[];
+  stages: StageTally[];
+  currentStage: StageTally | null;
+  winnerEntryId: string | null;
+  committee: {
+    active: { userId: string; displayName: string; role: string; addedAt: string }[];
+    removed: {
+      userId: string;
+      displayName: string;
+      email: string;
+      role: string;
+      addedAt: string;
+      removedAt: string | null;
+      removalReason: string | null;
+    }[];
+  };
+  viewer: {
+    isCommitteeMember: boolean;
+    isAdmin: boolean;
+    myVote: { stageId: string; entryId: string } | null;
+    canVote: boolean;
+  };
+}
+
+export async function listCompetitions() {
+  return (await getJson<{ items: CompetitionSummary[] }>('/api/competitions', 60)) ?? { items: [] };
+}
+
+/**
+ * One competition, tallied. Fetched without a cache: a vote must be visible on
+ * the next load, and a stale tally is the one thing a results page cannot show.
+ */
+export async function getCompetition(slug: string): Promise<CompetitionDetail | null> {
+  return getJson<CompetitionDetail>(`/api/competitions/${encodeURIComponent(slug)}`, 0);
+}
+
+/** Cast a vote. The device token is generated in the browser (see lib/device.ts). */
+export const castVote = (slug: string, entryId: string, deviceToken: string | null) =>
+  apiRequest<{ ok: boolean; changed: boolean }>('POST', `/api/competitions/${encodeURIComponent(slug)}/vote`, {
+    entryId,
+    ...(deviceToken ? { deviceToken } : {}),
+  });
+
+export const addCommitteeMember = (slug: string, email: string, role: string) =>
+  apiRequest<{ ok: boolean }>('POST', `/api/competitions/${encodeURIComponent(slug)}/committee`, { email, role });
+
+export const removeCommitteeMember = (slug: string, userId: string, reason: string) =>
+  apiRequest<{ ok: boolean }>('DELETE', `/api/competitions/${encodeURIComponent(slug)}/committee/${userId}`, { reason });
+
+export const openCompetitionStage = (slug: string, stageId: string) =>
+  apiRequest<{ ok: boolean }>('POST', `/api/competitions/${encodeURIComponent(slug)}/stages/${stageId}/open`);
+
+export const closeCompetitionStage = (slug: string, stageId: string) =>
+  apiRequest<{ ok: boolean }>('POST', `/api/competitions/${encodeURIComponent(slug)}/stages/${stageId}/close`);
+
+export const resolveCompetitionTie = (slug: string, stageId: string, entryId: string, reason: string) =>
+  apiRequest<{ ok: boolean }>('POST', `/api/competitions/${encodeURIComponent(slug)}/stages/${stageId}/tiebreak`, { entryId, reason });

@@ -1,6 +1,7 @@
 
 import Link from 'next/link';
 import KenyanFlag from './KenyanFlag';
+import BrandMark from './BrandMark';
 
 const FOOTER_SECTIONS = [
   {
@@ -68,7 +69,7 @@ function FooterBrand() {
       aria-label="Drill Lyrics KE home"
     >
       <span className="site-header__mark" aria-hidden="true">
-        DL
+        <BrandMark className="site-header__mark-crown" />
       </span>
 
       <span>

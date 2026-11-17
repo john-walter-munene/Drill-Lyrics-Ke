@@ -9,9 +9,38 @@
   --on-accent: #0c0b0a;
   --success: #45c48a;
   --focus: #ffb020;
+
+  /*
+   * AppKINGS brand palette, taken from the logo. The accent above is the
+   * crown's orange; these four are the bar under the wordmark. They are used
+   * sparingly — the footer's top rule and the brand lockup — so the site keeps
+   * one accent colour and the logo still reads as itself.
+   */
+  --brand-yellow: #f5b400;
+  --brand-red: #e8401c;
+  --brand-green: #7ab800;
+  --brand-blue: #1a9ad6;
+  --brand-ink: #6d6e71;
+
   --radius: 12px;
   --max-width: 1080px;
   --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /*
+   * Page stacking order. Named layers instead of loose numbers so the three
+   * things that can overlap each other stay in a defined order: page content is
+   * the base, the player rides just under the header, and the header always
+   * wins — the mobile menu has to be able to paint over a pinned video.
+   */
+  --z-content: 1;
+  --z-player: 40;
+  --z-header: 60;
+
+  /*
+   * Live height of the sticky header, published from SiteHeader so in-page
+   * anchors and the player can be offset by exactly the bar that covers them.
+   */
+  --site-header-height: 0px;
 }
 
 [data-theme='light'] {
@@ -23,6 +52,30 @@
   --border: #e0dad2;
   --accent: #d63a0d;
   --on-accent: #ffffff;
+  /* The logo's orange is too light on white; the light theme uses the darker
+   * red-orange so the crown keeps its contrast. */
+  --brand-red: #d63a0d;
+}
+
+/*
+ * In-page anchors ("Play a song", footer jumps) must not land under the sticky
+ * bar, so they are offset by its live height. The height changes when the bar
+ * compacts, which is why it is a custom property and not a magic number.
+ */
+html {
+  scroll-padding-top: calc(var(--site-header-height) + 1rem);
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
+[id] { scroll-margin-top: calc(var(--site-header-height) + 1rem); }
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  color: var(--fg);
 }
 
 *,
@@ -70,14 +123,33 @@ a:hover {
   left: 0;
 }
 
+/*
+ * Sticky header.
+ *
+ * The bar is sticky on every route. Two details make it feel deliberate rather
+ * than fixed-by-accident:
+ *   1. it compacts once the page is scrolled (the identity strip folds away and
+ *      the row shrinks), so it stops eating a sixth of a laptop screen;
+ *   2. it paints above the pinned player (`--z-header` > `--z-player`) and gets
+ *      a shadow only while it is actually detached from the top edge.
+ * `backdrop-filter` is prefixed because the sticky bar is exactly the kind of
+ * element where a missing prefix is visible as an opaque band.
+ */
 .site-header {
   position: sticky;
   top: 0;
   padding: 0 1.5rem;
-  background: color-mix(in srgb, var(--bg) 96%, transparent);
-  backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
   border-bottom: 1px solid var(--border);
-  z-index: 10;
+  z-index: var(--z-header);
+  transition: box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.site-header--scrolled {
+  background: color-mix(in srgb, var(--bg) 97%, transparent);
+  box-shadow: 0 10px 30px -18px rgb(0 0 0 / 70%);
 }
 
 .site-header__local {
@@ -88,6 +160,24 @@ a:hover {
   /* The identity bar is framed by the header's own border; a second line
    * directly under it reads as a rendering seam. */
   border-top: 0;
+  max-height: 40px;
+  overflow: hidden;
+  transition: max-height 200ms ease, opacity 160ms ease;
+}
+
+/* Folded away while scrolled: the identity line is a first impression, not a
+ * permanent fixture. `visibility` keeps its content out of the tab order. */
+.site-header--compact .site-header__local {
+  max-height: 0;
+  opacity: 0;
+  border-bottom-color: transparent;
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-header,
+  .site-header__local,
+  .site-header__inner { transition: none; }
 }
 
 .site-header__local-inner {
@@ -116,7 +206,10 @@ a:hover {
   max-width: var(--max-width);
   min-height: 86px;
   margin: 0 auto;
+  transition: min-height 200ms ease;
 }
+
+.site-header--compact .site-header__inner { min-height: 62px; }
 
 .site-header__brand {
   display: inline-flex;
@@ -151,6 +244,11 @@ a:hover {
   letter-spacing: 0.035em;
 }
 
+/*
+ * The brand mark: the AppKINGS crown on a dark tile, with the logo's
+ * four-colour bar along the bottom edge. The tile is the same near-black as the
+ * app icon, so the header, the footer and the installed icon are one mark.
+ */
 .site-header__mark {
   display: inline-grid;
   width: 2.65rem;
@@ -159,11 +257,31 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: linear-gradient(145deg, var(--surface-2), var(--surface));
-  color: var(--fg);
-  font-size: 0.82rem;
-  font-weight: 850;
-  letter-spacing: -0.04em;
+  color: var(--accent);
   box-shadow: inset 0 -3px 0 var(--accent);
+  transition: width 200ms ease, height 200ms ease;
+}
+
+.site-header__mark-crown {
+  width: 1.75rem;
+  height: 1.75rem;
+  transition: width 200ms ease, height 200ms ease;
+}
+
+.site-header--compact .site-header__mark-crown { width: 1.4rem; height: 1.4rem; }
+
+.site-header--compact .site-header__mark { width: 2.15rem; height: 2.15rem; }
+
+/* The tagline is the first thing to fold when the bar compacts. */
+.site-header__brand-copy small {
+  max-height: 1.2rem;
+  overflow: hidden;
+  transition: max-height 180ms ease, opacity 140ms ease;
+}
+
+.site-header--compact .site-header__brand-copy small {
+  max-height: 0;
+  opacity: 0;
 }
 
 /*
@@ -197,6 +315,7 @@ a:hover {
   white-space: nowrap;
   text-decoration: none;
   border-bottom: 2px solid transparent;
+  transition: color 120ms ease, border-color 120ms ease;
 }
 
 .site-header__nav-link:hover { color: var(--fg); text-decoration: none; }
@@ -317,7 +436,18 @@ a:hover {
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: 0 18px 44px rgb(0 0 0 / 38%);
-  z-index: 20;
+  /* Above the pinned player, which sits at --z-player. */
+  z-index: calc(var(--z-player) + 1);
+  animation: panel-in 160ms ease-out;
+}
+
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-header__mobile-panel { animation: none; }
 }
 
 .site-header__mobile-heading {
@@ -405,13 +535,20 @@ a:hover {
   font-size: 0.85rem;
 }
 
+/* The logo's four-colour bar, carried into the page as the footer's top rule. */
 .site-footer__topline {
   position: absolute;
   top: -1px;
   left: 0;
   width: min(320px, 36vw);
-  height: 2px;
-  background: var(--accent);
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--brand-yellow) 0 25%,
+    var(--brand-red) 25% 50%,
+    var(--brand-green) 50% 75%,
+    var(--brand-blue) 75% 100%
+  );
 }
 
 .site-footer__inner {
@@ -602,6 +739,78 @@ a:hover {
   .page-toolbar .btn { align-self: flex-start; }
 }
 
+/*
+ * Catalogue filters.
+ *
+ * Links, not inputs: each is a real anchor so a filter is shareable, crawlable
+ * and correct on the back button, with no client state. The active one is
+ * `aria-current="true"`, which is also the visual weight.
+ */
+.song-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  margin: 0 0 1.5rem;
+}
+
+.song-filters__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.song-filters__label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-right: 0.15rem;
+}
+
+.song-filters__pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+  background: transparent;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.song-filters__pill:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+  text-decoration: none;
+}
+
+.song-filters__pill--active,
+.song-filters__pill--active:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.song-filters__count {
+  margin: 0 0 0 auto;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 520px) {
+  /* At phone width the count wraps under the pills rather than squeezing
+   * them onto one unreadable line. */
+  .song-filters__count { margin-left: 0; width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .song-filters__pill { transition: none; }
+}
+
 .page-section { margin-top: 2.5rem; }
 
 .page-section > h2 {
@@ -619,29 +828,64 @@ a:hover {
   padding: 1.25rem;
 }
 
+/*
+ * Buttons.
+ *
+ * They were flat swatches with no state at all: no hover, no active, no focus
+ * beyond the global outline, and the same look whether they were a primary
+ * action or a quiet one. Each variant now has a hover and a press, and the
+ * transitions respect `prefers-reduced-motion`.
+ */
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.4rem;
   border-radius: 999px;
   border: 1px solid var(--border);
   padding: 0.55rem 1.1rem;
   font-size: 0.9rem;
   font-weight: 600;
+  line-height: 1.2;
   cursor: pointer;
   background: var(--surface-2);
   color: var(--fg);
+  text-decoration: none;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
 }
+
+.btn:hover {
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--fg) 6%);
+  border-color: var(--muted);
+  text-decoration: none;
+}
+
+.btn:active { transform: translateY(1px); }
+
+.btn:disabled,
+.btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 
 .btn--primary {
   background: var(--accent);
   border-color: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 6px 18px -12px var(--accent);
+}
+
+.btn--primary:hover {
+  background: color-mix(in srgb, var(--accent) 88%, var(--fg));
+  border-color: color-mix(in srgb, var(--accent) 88%, var(--fg));
   color: var(--on-accent);
 }
 
 .btn--sm {
   padding: 0.35rem 0.75rem;
   font-size: 0.8rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn { transition: none; }
+  .btn:active { transform: none; }
 }
 
 .badge {
@@ -651,43 +895,95 @@ a:hover {
   padding: 0.1rem 0.55rem;
   font-size: 0.72rem;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .muted {
   color: var(--muted);
 }
 
+/*
+ * Page content sits on the base layer of the stacking order, so it can never
+ * paint over the docked player or the sticky header, whatever its own z-index.
+ */
+#main-content {
+  position: relative;
+  z-index: var(--z-content);
+}
+
+#main-content:focus { outline: none; }
+
 /* --- Player + lyrics ------------------------------------------------------ */
 
 .persistent-player {
   max-width: var(--max-width);
   margin: 0 auto;
-  padding: 1.25rem 1.5rem 0;
+  /* Padding belongs to the shell, not here: an empty padded box is still a
+   * visible gap above the page title when nothing is playing. */
+  padding: 0 1.5rem;
+  scroll-margin-top: calc(var(--site-header-height) + 0.75rem);
 }
 
 /*
- * Once a track is chosen the player follows the reader: it stays pinned to the
- * top while the catalogue scrolls under it. The body reserves that height, so
- * the sticky bar never covers a song title or a Play button.
+ * The pinned player, in two states.
+ *
+ * Idle (no track): a quiet one-line prompt that scrolls with the page.
+ * Active: the player docks directly under the sticky header and stays there
+ * while the catalogue scrolls beneath it, so playback is always one click away.
+ *
+ * The dock offset is `--site-header-height`, published by SiteHeader — with
+ * `top: 0` the shell would slide UNDER the now-always-sticky header and the
+ * track title would be the first thing clipped. On narrow screens the docked
+ * player would take most of the viewport, so it is not pinned there: a 16:9
+ * video plus its controls is the whole of a phone screen.
  */
-body:has(.player-shell[aria-label]) .persistent-player {
+
+/* The card itself. States below only adjust it. */
+.player-shell {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  background: linear-gradient(145deg, var(--surface), color-mix(in srgb, var(--surface) 70%, var(--bg)));
+}
+
+/* Room above the page content when the player is not pinned: it sits between
+ * the header and the first heading and needs a breath on both sides. */
+.persistent-player:has(.player-shell:not(.player-shell--idle)) {
+  padding-top: 1.25rem;
+}
+
+body:has(.player-shell--idle) .persistent-player {
+  position: relative;
+  padding-bottom: 0;
+}
+
+body:has(.player-shell[aria-label]:not(.player-shell--idle)) .persistent-player {
   position: sticky;
-  top: 0;
-  z-index: 40;
+  top: var(--site-header-height);
+  z-index: var(--z-player);
   padding-bottom: 0.5rem;
-  background: linear-gradient(180deg, var(--bg) 78%, color-mix(in srgb, var(--bg) 0%, transparent));
+  /* A soft fade instead of a hard edge: content scrolling out from under the
+   * pinned player dissolves rather than being cut off by a line. */
+  background: linear-gradient(
+    180deg,
+    var(--bg) 0,
+    var(--bg) calc(100% - 0.75rem),
+    color-mix(in srgb, var(--bg) 0%, transparent) 100%
+  );
 }
 
-.player-shell--complete .player-shell__layout { align-items: start; }
-
-/* The video is the tallest element in the player; on a laptop the pinned shell
- * must leave the catalogue visible underneath it. */
-@media (min-width: 821px) {
-  body:has(.player-shell[aria-label]) .player-shell__video { max-height: 42vh; }
+/* The pinned shell is capped so the catalogue is still readable underneath. */
+@media (min-width: 901px) {
+  body:has(.player-shell[aria-label]:not(.player-shell--idle)) .player-shell__video {
+    max-height: 38vh;
+  }
 }
 
-@media (max-width: 820px) {
-  body:has(.player-shell[aria-label]) .persistent-player { position: static; }
+@media (max-width: 900px) {
+  body:has(.player-shell[aria-label]:not(.player-shell--idle)) .persistent-player {
+    position: static;
+    background: none;
+  }
   .player-shell__bar { flex-wrap: wrap; }
   .player-shell__bar-seek { flex-basis: 100%; order: 3; }
 }
@@ -730,9 +1026,15 @@ body:has(.player-shell[aria-label]) .persistent-player {
   font-size: 0.8rem;
   font-weight: 700;
   cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
 }
 
+.player-shell__mode-switch button:hover { color: var(--fg); }
 .player-shell__mode-switch button.is-active { background: var(--surface-2); color: var(--fg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .player-shell__mode-switch button { transition: none; }
+}
 
 .player-shell__layout {
   display: grid;
@@ -742,7 +1044,6 @@ body:has(.player-shell[aria-label]) .persistent-player {
 
 .player-shell--listen .player-shell__layout { grid-template-columns: minmax(250px, 360px) minmax(0, 1fr); align-items: stretch; }
 .player-shell--listen .player-shell__video { min-height: 0; aspect-ratio: 16 / 9; }
-.player-shell { padding: 1rem; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: linear-gradient(145deg, var(--surface), color-mix(in srgb, var(--surface) 70%, var(--bg))); }
 .player-shell__layout { align-items: center; }
 .player-shell__video { box-shadow: 0 14px 34px rgb(0 0 0 / 24%); }
 .player-shell--watch .player-shell__video { max-width: 900px; margin-inline: auto; }
@@ -753,38 +1054,100 @@ body:has(.player-shell[aria-label]) .persistent-player {
  * video. The full deck (speed, volume sliders, shuffle…) is one click away.
  * Without this the transport sat below a 900px video, so pressing Play on the
  * song list left the user with a video and no visible controls.
+ *
+ * `justify-content` and vertical padding are deliberately NOT set here: this
+ * row is a single line by design and the mobile query lets it wrap instead.
  */
-.player-shell__bar { display: flex; align-items: center; gap: 0.65rem; width: 100%; flex: 1 0 100%; margin-top: 0.35rem; }
+.player-shell__bar { display: flex; align-items: center; gap: 0.65rem; width: 100%; flex: 1 0 100%; margin-top: 0.35rem; min-width: 0; }
 .player-shell__bar .player-play-button { flex: none; width: 2.4rem; height: 2.4rem; }
 .player-shell__bar-track { display: grid; gap: 0.15rem; min-width: 0; flex: 1 1 auto; }
 .player-shell__bar-track strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
 .player-shell__bar-track small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; }
 .player-shell__bar-seek { flex: 1 1 220px; min-width: 90px; accent-color: var(--accent); cursor: pointer; }
-.player-shell__bar-time { flex: none; color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+.player-shell__bar-time { flex: none; color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .player-shell__seek-row { display: grid; grid-template-columns: 3rem minmax(0, 1fr) 3rem; align-items: center; gap: 0.65rem; color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
 .player-shell__seek-row > span:last-child { text-align: right; }
 .player-shell__seek-row input,
 .player-shell__volume input { width: 100%; accent-color: var(--accent); cursor: pointer; }
 .player-shell__transport-actions { display: flex; justify-content: center; align-items: center; gap: 0.75rem; padding: 0.55rem 0 0.7rem; }
 .player-icon-button,
-.player-play-button { display: inline-grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.player-play-button { display: inline-grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; transition: transform 140ms ease, background-color 140ms ease, color 140ms ease; }
 .player-icon-button { min-width: 2.25rem; min-height: 2.25rem; border-radius: 50%; font-size: 1.1rem; }
 .player-icon-button:hover, .player-icon-button.is-active { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .player-icon-button:disabled, .player-play-button:disabled { opacity: 0.42; cursor: not-allowed; }
-.player-play-button { width: 2.8rem; height: 2.8rem; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: 1.1rem; font-weight: 800; }
-.player-play-button:hover { transform: scale(1.05); }
+.player-play-button { width: 2.8rem; height: 2.8rem; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: 1.1rem; font-weight: 800; box-shadow: 0 6px 18px -8px var(--accent); }
+.player-play-button:hover:not(:disabled) { transform: scale(1.05); }
+.player-play-button:active:not(:disabled) { transform: scale(0.97); }
+
+@media (prefers-reduced-motion: reduce) {
+  .player-icon-button,
+  .player-play-button { transition: none; }
+  .player-play-button:hover:not(:disabled) { transform: none; }
+}
+
 .player-shell__secondary-controls { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 0.85rem; }
+
+/*
+ * The row of small buttons that sit under the transport (More controls,
+ * Queue, YouTube). They used to be laid out by `.player-shell__details`, which
+ * distributes its children across the full width, so each button was flung to
+ * an opposite edge. They read as one group.
+ */
+.player-shell__bar-actions {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding-top: 0.15rem;
+}
+
+.player-shell__bar-actions .btn[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--fg);
+}
 .player-shell__volume { display: inline-flex; align-items: center; gap: 0.3rem; }
 .player-shell__volume input { width: 90px; }
 .player-shell__speed { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--muted); font-size: 0.75rem; }
 .player-shell__speed select { padding: 0.3rem 0.45rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--fg); }
+
+/* Range inputs are the player's busiest control; give them a consistent track
+ * instead of each browser's default (Safari's is nearly invisible on dark). */
+.player-shell input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 0.3rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.player-shell input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  border: 0;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.player-shell input[type='range']::-moz-range-thumb {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .player-shell__queue { margin-top: 1rem; padding: 0.85rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
 .player-shell__queue-heading { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.78rem; }
 .player-shell__queue-heading strong { color: var(--fg); }
 .player-shell__queue ol { max-height: 280px; overflow: auto; list-style: none; margin: 0.55rem 0 0; padding: 0; }
 .player-shell__queue li + li { border-top: 1px solid var(--border); }
-.player-shell__queue li > button { display: grid; grid-template-columns: 2.2rem minmax(0, 1fr) auto; width: 100%; align-items: center; gap: 0.65rem; padding: 0.65rem 0.35rem; border: 0; background: transparent; color: var(--fg); text-align: left; cursor: pointer; }
+.player-shell__queue li > button { display: grid; grid-template-columns: 2.2rem minmax(0, 1fr) auto; width: 100%; align-items: center; gap: 0.65rem; padding: 0.65rem 0.35rem; border: 0; background: transparent; color: var(--fg); text-align: left; cursor: pointer; border-radius: 6px; }
 .player-shell__queue li > button:hover, .player-shell__queue li.is-current > button { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.player-shell__queue li.is-current > button { box-shadow: inset 2px 0 0 var(--accent); }
 .player-shell__queue-index { color: var(--muted); font-size: 0.78rem; }
 .player-shell__queue li.is-current .player-shell__queue-index, .player-shell__queue-playing { color: var(--accent); }
 .player-shell__queue li > button > span:nth-child(2) { display: grid; min-width: 0; }
@@ -853,13 +1216,30 @@ body:has(.player-shell[aria-label]) .persistent-player {
   background: transparent;
 }
 
-.player-shell__bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  padding: 0.65rem 0;
+/*
+ * The idle player: no border, no gradient card, no second dashed box inside it.
+ * A page with nothing playing used to open with two nested empty frames above
+ * its own heading. The prompt is now what it is — a line of text.
+ */
+.player-shell--idle {
+  padding: 0.55rem 0 0;
+  border: 0;
+  background: none;
+}
+
+.player-shell--idle .player-shell__empty {
+  padding: 0.6rem 0;
+  border: 0;
+  justify-content: flex-start;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.player-shell__empty::before {
+  content: '♪';
+  margin-right: 0.5rem;
+  color: var(--accent);
+  font-size: 1rem;
 }
 
 .player-shell__track,
@@ -874,14 +1254,38 @@ body:has(.player-shell[aria-label]) .persistent-player {
 .player-shell__controls button:disabled { opacity: 0.45; cursor: not-allowed; }
 .player-shell__error { color: var(--accent); margin: 0 0 0.5rem; }
 
+/*
+ * Catalogue rows. Each row is a card with a thumbnail, a title and one action.
+ * The row for the track the player is on is marked, so a listener scrolling the
+ * catalogue can see at a glance where playback is — the button alone said
+ * "Playing" in a disabled state, which reads like an error.
+ */
 .song-list-item {
   display: flex;
   align-items: center;
   gap: 0.9rem;
+  transition: border-color 140ms ease, background-color 140ms ease;
 }
+
+.song-list-item:hover { border-color: color-mix(in srgb, var(--muted) 55%, var(--border)); }
 .song-list-item > div { flex: 1; min-width: 0; }
-.song-list-item__artwork { flex: 0 0 112px; width: 112px; height: 63px; object-fit: cover; border-radius: 8px; background: var(--surface-2); }
+.song-list-item__artwork {
+  flex: 0 0 112px;
+  width: 112px;
+  height: 63px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
 .song-list-item button:disabled { opacity: 0.65; cursor: default; }
+
+.song-list-item--current {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.song-list-item--current .song-list-item__artwork { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .home-listen { margin: 0 0 3rem; }
 .home-listen__heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
 .home-listen__heading h2 { margin: 0.65rem 0 0.35rem; font-size: 1.35rem; }
@@ -891,12 +1295,18 @@ body:has(.player-shell[aria-label]) .persistent-player {
 .lyrics__navigation {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.65rem;
   margin: 0.35rem 0 0.75rem;
 }
 
+/* The position readout ("6 / 42") is the one live number here; give it the
+ * same tabular figures as the player clock so it does not jitter. */
+.lyrics__navigation .muted { font-variant-numeric: tabular-nums; margin-left: auto; }
+
 .lyrics__navigation button:disabled { opacity: 0.45; cursor: not-allowed; }
-.lyrics__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.lyrics__heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+.lyrics__heading h2 { font-size: 1rem; margin: 0 0 0.5rem; }
 .lyrics__heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
 
 .player-layout {
@@ -908,11 +1318,39 @@ body:has(.player-shell[aria-label]) .persistent-player {
 
 .player-layout--listen { grid-template-columns: minmax(0, 0.65fr) minmax(0, 1.8fr); }
 
+/*
+ * Song page. The left column in Watch mode is a short orientation card beside
+ * the lyrics; in Listen mode the lyrics get the wide column. It is a side note,
+ * not a destination, so it is quieter than the lyrics panel and sticks to the
+ * top of the column when there is room.
+ */
+.song-page { margin-top: 1.5rem; }
+
+.song-page__meta { display: grid; gap: 0.35rem; }
+.song-page__meta p { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.65; }
+.song-page__released { font-size: 0.8rem !important; }
+
+@media (min-width: 821px) {
+  .song-page__meta {
+    position: sticky;
+    top: calc(var(--site-header-height) + 1rem);
+  }
+}
+
+/*
+ * The reading column is a panel like every other card, so the lyrics are not a
+ * loose block floating next to one. `position: relative` anchors the scroll fade.
+ */
 .lyrics {
+  position: relative;
   max-height: 60vh;
   overflow-y: auto;
-  padding-right: 0.5rem;
+  padding: 0.25rem 0.9rem 0.25rem 0.25rem;
   scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem, #000 calc(100% - 1.25rem), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem, #000 calc(100% - 1.25rem), transparent 100%);
 }
 
 .lyrics__line {
@@ -921,17 +1359,26 @@ body:has(.player-shell[aria-label]) .persistent-player {
   text-align: left;
   background: none;
   border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 8px 8px 0;
   color: var(--muted);
-  font-size: 1.05rem;
-  line-height: 1.6;
-  padding: 0.25rem 0;
+  font-size: clamp(1.02rem, 1.4vw, 1.14rem);
+  line-height: 1.55;
+  padding: 0.32rem 0.6rem;
   cursor: pointer;
-  transition: color 120ms ease;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
 
+.lyrics__line:hover { color: var(--fg); background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+
+/* The line being sung: brighter, heavier, and marked by the accent rail so it
+ * reads at a glance without relying on weight alone (WCAG 1.4.1). The slight
+ * inset says "this is the current one" without moving the text. */
 .lyrics__line[aria-current='true'] {
   color: var(--fg);
   font-weight: 700;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-left-color: var(--accent);
 }
 
 .lyrics__empty {
@@ -943,6 +1390,7 @@ body:has(.player-shell[aria-label]) .persistent-player {
   .lyrics {
     scroll-behavior: auto;
   }
+  .lyrics__line { transition: none; }
 }
 
 @media (max-width: 1100px) {
@@ -991,6 +1439,7 @@ body:has(.player-shell[aria-label]) .persistent-player {
   .site-header__brand-copy strong { font-size: 1.02rem; white-space: nowrap; }
   .site-header__brand-copy small { font-size: 0.58rem; }
   .site-header__mark { width: 2rem; height: 2rem; }
+  .site-header__mark-crown { width: 1.35rem; height: 1.35rem; }
   .site-header__mobile-actions { gap: 0.4rem; }
   .site-header__mobile-actions .btn { padding: 0.38rem 0.62rem; font-size: 0.73rem; }
   .site-header__menu-button { padding: 0.38rem 0.6rem; font-size: 0.75rem; gap: 0.4rem; }
@@ -1005,13 +1454,18 @@ body:has(.player-shell[aria-label]) .persistent-player {
 /* Below 380px the tagline under the wordmark is the first thing to go. */
 @media (max-width: 380px) {
   .site-header__brand-copy small { display: none; }
-  .site-header__quick-submit { padding-inline: 0.5rem; }
+  .site-header__quick-submit { display: none; }
   .site-header__menu-label { display: none; }
 }
 
 @media (max-width: 820px) {
   .persistent-player { padding: 0.75rem 1rem 0; }
-  .player-shell__bar { align-items: flex-start; }
+  /* The play row becomes two lines: transport on top (title + play button),
+   * the scrub bar across the full width below it. Keeping it on one line at
+   * phone width left the title unreadable and the seek target tiny. */
+  .player-shell__bar { flex-wrap: wrap; align-items: center; }
+  .player-shell__bar-seek { flex-basis: 100%; order: 3; }
+  .player-shell__bar-time { order: 4; margin-left: auto; }
   .player-shell--listen .player-shell__layout { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); }
   .player-shell__details { align-items: flex-start; }
   .player-shell__artwork { width: 96px; }
@@ -1019,19 +1473,56 @@ body:has(.player-shell[aria-label]) .persistent-player {
     grid-template-columns: 1fr;
   }
 
+  /* In Listen mode the lyrics matter more than the orientation card, so they
+   * come first on a narrow screen. */
   .player-layout--listen > :first-child { order: 2; }
   .player-layout--listen > :nth-child(2) { order: 1; }
 
   .lyrics {
-    max-height: 40vh;
+    max-height: 45vh;
   }
 }
 
+/*
+ * Sheng annotations: a small pill under the line it explains. The explanation
+ * opens inline; it is a note in the reading column, not a tooltip, so it stays
+ * reachable by keyboard and by screen readers.
+ */
 .lyrics__annotation { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; margin: 0 0.45rem 0.5rem; vertical-align: middle; }
-.lyrics__annotation-trigger { border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--accent); cursor: pointer; font: inherit; font-size: 0.75rem; padding: 0.15rem 0.55rem; }
-.lyrics__annotation-explanation { flex-basis: 100%; color: var(--muted); font-size: 0.875rem; padding: 0.2rem 0.4rem 0.4rem; }
+.lyrics__annotation-trigger {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.12rem 0.55rem;
+  transition: background-color 120ms ease;
+}
+.lyrics__annotation-trigger:hover { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+.lyrics__annotation-explanation {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.65;
+  padding: 0.3rem 0.6rem 0.45rem;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* The lyrics panel: same card as the rest of the page, but taller inside. */
+.lyrics-panel { display: grid; align-content: start; gap: 0.1rem; }
+.lyrics__hint { margin: 0.5rem 0 0; font-size: 0.75rem; }
+
+.badge--accent {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  color: var(--success);
+}
+
 .search-results { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); list-style: none; padding: 0; }
 .search-results__item { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem; }
+.search-results__item:hover { border-color: var(--muted); }
 .search-page__input { background: var(--surface); border: 1px solid var(--border); border-radius: 0.5rem; color: var(--fg); padding: 0.7rem; }
 .visually-hidden { clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
 
@@ -1151,15 +1642,18 @@ form[class] > input:focus-visible,
   .player-shell--listen .player-shell__video { width: min(100%, 360px); }
   .player-shell__details { align-items: center; }
   .player-shell__artwork { width: 80px; }
+  /* One row per song, thumbnail left and the action on the right edge, so the
+   * list reads as music rather than as a stack of form controls. */
   .song-list-item {
     display: grid;
-    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-columns: 72px minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.65rem;
+    padding: 0.85rem 0.9rem;
   }
   .song-list-item__artwork { width: 72px; height: 41px; }
   .song-list-item > div { min-width: 0; overflow-wrap: anywhere; }
-  .song-list-item button { grid-column: 2; justify-self: start; margin: 0; }
+  .song-list-item > button { grid-column: 3; grid-row: 1; justify-self: end; margin: 0; }
   .home-listen__heading { align-items: flex-start; flex-direction: column; }
   .home-listen__empty { align-items: flex-start; flex-direction: column; }
 }
@@ -1344,4 +1838,359 @@ form[class] > input:focus-visible,
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   font-size: 0.92rem;
+}
+
+/* --- Competitions ----------------------------------------------------------
+ *
+ * Three-stage voting. The results view is the important one: every entrant is
+ * listed with its count and share, advancing and eliminated alike, so a closed
+ * stage stays readable while a later one is being voted on.
+ */
+
+.competition-list {
+  display: grid;
+  gap: 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.competition-list__stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0;
+}
+
+.competition-list__stage--voting_open {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent);
+}
+
+.competition-list__stage--completed {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  color: var(--success);
+}
+
+.competition-page__hero {
+  max-width: 760px;
+  padding: 1rem 0 2rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.competition-page__hero h1 {
+  margin: 0.75rem 0 0.75rem;
+  font-size: clamp(2rem, 5.5vw, 3.25rem);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.competition-page__lead {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(1rem, 2vw, 1.12rem);
+  line-height: 1.75;
+}
+
+/* The winner banner: the one place the page raises its voice. */
+.competition-winner {
+  margin-top: 2rem;
+  padding: 1.5rem 1.75rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--radius);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 14%, var(--surface)),
+    var(--surface)
+  );
+}
+
+.competition-winner__label {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.competition-winner h2 {
+  margin: 0.35rem 0 0.25rem;
+  font-size: clamp(1.5rem, 4vw, 2.1rem);
+  letter-spacing: -0.03em;
+}
+
+.competition-winner p { margin: 0; }
+
+.competition-page__stages { margin-top: 2.5rem; }
+.competition-page__stages > h2 { margin-bottom: 0.35rem; }
+.competition-page__stages > p { margin-top: 0; max-width: 720px; line-height: 1.7; }
+
+/* One stage. */
+.stage-results {
+  margin-top: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.stage-results--current {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.stage-results__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.stage-results__eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.66rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.stage-results__head h2 {
+  margin: 0.2rem 0 0;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+}
+
+.stage-results__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+}
+
+.stage-results__status--voting_open { border-color: var(--accent); color: var(--accent); }
+.stage-results__status--completed { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); color: var(--success); }
+
+.stage-results__list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * One entrant: rank, name, a bar, the count and the outcome. The grid keeps the
+ * bars aligned across rows so the comparison is readable at a glance.
+ */
+.stage-results__row {
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1.4fr) minmax(60px, 1fr) 4.5rem 5.5rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: 8px;
+  border-left: 2px solid transparent;
+}
+
+.stage-results__row--advancing { background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
+.stage-results__row--winner {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-left-color: var(--accent);
+}
+
+.stage-results__rank {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.stage-results__entry { display: grid; min-width: 0; }
+.stage-results__entry strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
+.stage-results__entry small { font-size: 0.75rem; }
+
+.stage-results__bar {
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.stage-results__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent) 70%, var(--muted));
+}
+
+.stage-results__row--winner .stage-results__bar > span { background: var(--accent); }
+
+.stage-results__count {
+  display: grid;
+  justify-items: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.stage-results__count strong { font-size: 0.92rem; }
+.stage-results__count small { font-size: 0.7rem; }
+
+.stage-results__flag { justify-self: end; }
+.stage-results__out { font-size: 0.72rem; }
+
+.stage-results__notice {
+  margin: 0.9rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-left: 2px solid var(--focus);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--focus) 10%, transparent);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.stage-results__notice--resolved {
+  border-left-color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+/* The ballot. */
+.vote-panel { margin-top: 2rem; }
+.vote-panel h2 { margin-top: 0; }
+.vote-panel > p { margin-top: 0; }
+
+.vote-panel__options {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  padding: 0;
+  border: 0;
+}
+
+.vote-panel__option {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.vote-panel__option:hover { border-color: var(--muted); }
+.vote-panel__option.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+}
+
+.vote-panel__option input { accent-color: var(--accent); flex: 0 0 auto; }
+.vote-panel__option-copy { display: grid; flex: 1 1 auto; min-width: 0; }
+.vote-panel__option-copy small { font-size: 0.75rem; }
+
+.vote-panel__message { margin: 0.75rem 0 0; font-size: 0.85rem; }
+.vote-panel__message--ok { color: var(--success); }
+.vote-panel__message--error { color: var(--accent); }
+
+/* Organiser controls. */
+.admin-controls { margin-top: 2.5rem; }
+.admin-controls h2 { margin-top: 0; }
+.admin-controls h3 { margin: 1.5rem 0 0.5rem; font-size: 0.95rem; }
+
+.admin-controls__error,
+.admin-controls__notice {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.admin-controls__error { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.admin-controls__notice { background: color-mix(in srgb, var(--success) 12%, transparent); }
+
+.admin-controls__stages,
+.admin-controls__committee {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-controls__stages > li,
+.admin-controls__committee > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.admin-controls__actions { display: flex; align-items: center; gap: 0.5rem; }
+.admin-controls__actions input { max-width: 200px; }
+
+.admin-controls__tiebreak {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--focus) 45%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--focus) 7%, transparent);
+}
+
+.admin-controls__tiebreak h3 { margin-top: 0; }
+.admin-controls__tiebreak label { display: grid; gap: 0.3rem; margin-bottom: 0.6rem; font-size: 0.85rem; }
+
+.admin-controls__add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.admin-controls__add label { display: grid; flex: 1 1 200px; gap: 0.3rem; font-size: 0.85rem; }
+
+.admin-controls__removed { margin-top: 1rem; font-size: 0.85rem; }
+.admin-controls__removed ul { margin: 0.5rem 0 0; padding-left: 1.1rem; line-height: 1.8; }
+
+.competition-page__committee { margin-top: 2.5rem; }
+.competition-page__committee-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.competition-page__committee-list > li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  /* The bar is the first thing to go: the count and the outcome carry the
+   * result, and five columns do not fit a phone. */
+  .stage-results__row {
+    grid-template-columns: 1.5rem minmax(0, 1fr) 3.5rem;
+    row-gap: 0.35rem;
+  }
+  .stage-results__bar { display: none; }
+  .stage-results__flag { grid-column: 2 / -1; justify-self: start; }
+  .admin-controls__actions { width: 100%; }
+  .admin-controls__actions input { flex: 1 1 auto; max-width: none; }
 }

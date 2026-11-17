@@ -7,13 +7,14 @@ import { defineConfig, devices } from '@playwright/test';
  * Playwright as the e2e tool and `docs/runbook.md` is how the stack comes up.
  *
  *   npm run dev:stack        # or: npm run stack:up
- *   npm run test:e2e
+ *   npm run test:e2e          (override origins with E2E_WEB_URL / E2E_API_URL)
  *
  * The suite skips itself with a clear message when the stack is not reachable,
  * so a machine without Docker still gets a green `npm run test` and a runnable
  * `npm run test:e2e` that says why it did nothing.
  */
-const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:3000';
+// DrillKe's own ports (see .env): 3100 web, 4100 api.
+const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:3100';
 
 export default defineConfig({
   testDir: './e2e',

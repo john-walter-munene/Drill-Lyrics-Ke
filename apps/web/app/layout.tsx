@@ -6,7 +6,7 @@ import PlayerProvider from './components/player/PlayerProvider';
 import PersistentPlayer from './components/player/PersistentPlayer';
 
 export const metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3100'),
   title: {
     default: 'Drill Lyrics — Kenyan drill, line by line',
     template: '%s · Drill Lyrics',
@@ -14,8 +14,18 @@ export const metadata = {
   description:
     'The home of Kenyan drill. Read the bars while the music plays — synchronized lyrics, Sheng annotations, artists, DJs, podcasts and events.',
   icons: {
-    icon: '/favicon.svg',
-    apple: '/icon-192.svg',
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    // iOS does not accept SVG for a home-screen icon, so this one is a PNG.
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
+  applicationName: 'Drill Lyrics',
+  appleWebApp: {
+    capable: true,
+    title: 'Drill Lyrics',
+    statusBarStyle: 'black-translucent' as const,
   },
   openGraph: {
     type: 'website',

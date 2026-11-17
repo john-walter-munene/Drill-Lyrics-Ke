@@ -88,6 +88,43 @@ enum ArtistSuggestionStatus {
   rejected
 }
 
+/// Where a competition is in its lifecycle (docs/context.md §Competition
+/// lifecycle). `draft` is invisible to the public; `published` is announced but
+/// not yet open; `voting_open` accepts votes; `voting_closed` is the gap between
+/// the last vote and the published result; `results_published` is final.
+enum CompetitionStatus {
+  draft
+  published
+  voting_open
+  voting_closed
+  results_published
+}
+
+/// The three rounds every competition runs through. A stage is a row, not a
+/// column, so each round keeps its own window, its own entrants and its own
+/// votes — which is what makes the results of round one still readable after
+/// the final has been decided.
+enum CompetitionStageKind {
+  quarterfinal
+  semifinal
+  final
+}
+
+enum CompetitionStageStatus {
+  pending
+  voting_open
+  voting_closed
+  completed
+}
+
+/// Who may vote. `public` is one vote per device per stage; `account` needs a
+/// signed-in account; `committee` is restricted to the competition's committee.
+enum CompetitionVoterScope {
+  public
+  account
+  committee
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -112,6 +149,8 @@ model User {
   emailConfirms   EmailConfirmationToken[]
   artistSuggestions ArtistSuggestion[] @relation("ArtistSuggestionSubmitter")
   reviewedArtistSuggestions ArtistSuggestion[] @relation("ArtistSuggestionReviewer")
+  committeeMemberships CompetitionCommitteeMember[]
+  votes           CompetitionVote[]
 
   @@index([role])
 }
@@ -293,6 +332,11 @@ model Song {
   status         SongStatus @default(draft)
   // Denormalised for catalogue sorting without joining versions.
   syncedVersionId String?
+  /// When the pointed-at version became the live timed one. `syncedVersionId`
+  /// is a cuid, so ordering by it orders by creation batch, not by time — the
+  /// catalogue's "recently synced" sort needs this column. Null exactly when
+  /// `syncedVersionId` is null (backfilled from `updatedAt` once).
+  syncedAt       DateTime?
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
@@ -303,6 +347,8 @@ model Song {
   submissions LyricsSubmission[]
 
   @@index([status, releaseDate])
+  @@index([status, syncedAt])
+  @@index([status, syncedVersionId])
   @@index([title])
   // One SONG per video, in every direction. Drafts used to be allowed to reuse
   // an id, so a re-import could re-create a video that was already catalogued
@@ -505,6 +551,157 @@ model Report {
 
   @@index([status, createdAt])
   @@index([targetType, targetId])
+}
+
+/// A playlist competition (docs/context.md §Playlists and Competitions).
+///
+/// The lifecycle is `status`; the rounds are `stages`. A competition is created
+/// as a draft, its committee is appointed by an admin, and each stage is opened
+/// and closed explicitly — nothing advances on a timer, so a result is never
+/// published by a clock the organiser did not set.
+model Competition {
+  id          String            @id @default(cuid())
+  slug        String            @unique
+  title       String
+  description String?
+  organizer   String?
+  status      CompetitionStatus @default(draft)
+  /// How a vote is counted. `one_per_device` is the live rule; the others are
+  /// kept so a competition can be re-run under a different rule without a
+  /// schema change.
+  voterScope  CompetitionVoterScope @default(public)
+  /// Whether a voter may change their pick while a stage is open.
+  allowVoteChange Boolean        @default(false)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  stages    CompetitionStage[]
+  entries   CompetitionEntry[]
+  committee CompetitionCommitteeMember[]
+  votes     CompetitionVote[]
+
+  @@index([status, createdAt])
+}
+
+/// One round of a competition. `order` is 1, 2, 3 for quarterfinal, semifinal,
+/// final; `advancing` is how many entrants move on from this round (0 for the
+/// final, which produces a winner instead).
+model CompetitionStage {
+  id            String                 @id @default(cuid())
+  competitionId String
+  competition   Competition            @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  kind          CompetitionStageKind
+  order         Int
+  title         String
+  status        CompetitionStageStatus @default(pending)
+  opensAt       DateTime?
+  closesAt      DateTime?
+  advancing     Int                    @default(0)
+  /// Set when an organiser resolves a tie across the cut line. The chosen
+  /// entrant advances; the reason is kept so the decision is explainable.
+  tiebreakEntryId String?
+  tiebreakReason  String?
+  tiebreakById    String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  entrants CompetitionStageEntrant[]
+  votes    CompetitionVote[]
+
+  @@unique([competitionId, order])
+  @@index([competitionId, status])
+}
+
+/// A playlist entered in a competition. The playlist itself is a title and a
+/// curator for now; linking it to a `Playlist` row is a later step.
+model CompetitionEntry {
+  id            String   @id @default(cuid())
+  competitionId String
+  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  slug          String
+  title         String
+  curator       String
+  description   String?
+  /// Optional cover; the UI falls back to a generated tile.
+  imageUrl      String?
+  createdAt     DateTime @default(now())
+
+  stages CompetitionStageEntrant[]
+  votes  CompetitionVote[]
+
+  @@unique([competitionId, slug])
+  @@index([competitionId])
+}
+
+/// Which entries are in which stage. A row per (stage, entry) so an entry can
+/// be eliminated in the quarterfinal and still be listed there afterwards.
+model CompetitionStageEntrant {
+  stageId String
+  stage   CompetitionStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  entryId String
+  entry   CompetitionEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  /// Seed within the stage, for a stable display order before any votes.
+  position Int @default(0)
+
+  @@id([stageId, entryId])
+  @@index([entryId])
+}
+
+/// A committee member appointed by an admin. Removing a member is a soft
+/// delete (`removedAt`) so their past votes stay attributable in the audit
+/// trail; a removed member can no longer vote or see the committee view.
+model CompetitionCommitteeMember {
+  id            String      @id @default(cuid())
+  competitionId String
+  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role          String      @default("member")
+  addedById     String?
+  addedAt       DateTime    @default(now())
+  /// Who removed the member and why. Kept so the audit trail explains a gap in
+  /// the committee rather than just showing a member who stopped voting.
+  removedById   String?
+  removedAt     DateTime?
+  removalReason String?
+
+  @@unique([competitionId, userId])
+  @@index([competitionId, removedAt])
+}
+
+/// One vote. `voterKey` is the identity the rule was enforced against: the
+/// account id for account/committee voting, or a device fingerprint for public
+/// voting. The unique key is (stage, voterKey) — the database, not the service,
+/// is what makes a second vote impossible.
+model CompetitionVote {
+  id            String   @id @default(cuid())
+  competitionId String
+  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  stageId       String
+  stage         CompetitionStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  entryId       String
+  entry         CompetitionEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  voterKey      String
+  /// How the vote was cast, for the audit trail: `device` or `account`.
+  method        String   @default("device")
+  /// SHA-256 of the browser's device token, when one was presented. The raw
+  /// token never leaves the browser; this is what lets the live rule refuse a
+  /// second device for the same account. Null for votes cast before the device
+  /// rule was enforced (and for the seeded test votes).
+  deviceHash    String?
+  /// Set when an admin invalidates a vote; invalidated votes are excluded from
+  /// every tally but kept so the record is complete.
+  invalidatedAt DateTime?
+  invalidatedById String?
+  createdAt     DateTime @default(now())
+
+  @@unique([stageId, voterKey])
+  @@index([competitionId, createdAt])
+  @@index([entryId])
 }
 
 /// Append-only record of privileged actions (reviews, role changes, unpublish).

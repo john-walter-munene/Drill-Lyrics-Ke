@@ -78,19 +78,32 @@ export default function LyricsView({ lyrics }: { lyrics: LyricsPayload | null })
 
   if (!lyrics || lines.length === 0) {
     return (
-      <div className="lyrics">
-        <p className="lyrics__empty">Lyrics coming soon. Know this one?</p>
-      </div>
+      <section className="panel lyrics-panel">
+        <div className="lyrics">
+          <p className="lyrics__empty">Lyrics coming soon. Know this one?</p>
+        </div>
+      </section>
     );
   }
 
   return (
-    <div>
+    <section className="panel lyrics-panel">
       <div className="lyrics__heading">
-        <h2 style={{ fontSize: '1rem', margin: '0 0 0.5rem' }}>Lyrics</h2>
+        <h2>Lyrics</h2>
         <div className="lyrics__heading-actions">
-          <span className="badge">{synchronized ? 'Synchronized' : 'Not yet synchronized'}</span>
-          {synchronized ? <button type="button" className="btn btn--sm" onClick={() => setAutoScroll((value) => !value)} aria-pressed={autoScroll}>Auto-scroll {autoScroll ? 'on' : 'off'}</button> : null}
+          <span className={`badge${synchronized ? ' badge--accent' : ''}`}>
+            {synchronized ? 'Synchronized' : 'Not yet synchronized'}
+          </span>
+          {synchronized ? (
+            <button
+              type="button"
+              className="btn btn--sm"
+              onClick={() => setAutoScroll((value) => !value)}
+              aria-pressed={autoScroll}
+            >
+              Auto-scroll {autoScroll ? 'on' : 'off'}
+            </button>
+          ) : null}
         </div>
       </div>
       {synchronized ? (
@@ -127,11 +140,9 @@ export default function LyricsView({ lyrics }: { lyrics: LyricsPayload | null })
         ))}
       </div>
       {synchronized ? (
-        <p className="muted" style={{ fontSize: '0.75rem' }}>
-          Tap a line to jump to it.
-        </p>
+        <p className="muted lyrics__hint">Tap a line to jump to it.</p>
       ) : null}
-    </div>
+    </section>
   );
 }
 

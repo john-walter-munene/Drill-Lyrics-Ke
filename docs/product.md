@@ -109,6 +109,7 @@ scope discipline is the release strategy.
 | **User playlists** | Nice-to-have next to the player; no retention signal yet. |
 | **Native checkout / M-Pesa** | Requires a commission and payout model that does not exist yet. |
 | **Drill Radio** | Licensing-heavy; cannot ship without rights. |
+| **Drill Houses** (proposed) | A host opens a room and listeners tune in ad-free. The social form of the player, but it is a public performance of the catalogue and needs a rights answer and a real-time cost before it is scheduled. See `roadmap.md` § Phase 7. |
 | **Word-level karaoke highlighting** | Line-level sync first; word-level is a polish pass. |
 | **Shorts / vertical feed** | Second surface. Prove the catalogue first. |
 | **Swahili/Sheng UI strings** | English UI in v1; content itself is multilingual. |
@@ -280,6 +281,10 @@ Each of these must be closed before the phase that depends on it:
 3. Do we require rights clearance before publishing community lyrics, or publish
    with a takedown-first policy?
 4. Which events source seeds the calendar — manual entry only, or a partner feed?
+5. **Drill Houses:** does the existing rights policy cover a hosted public
+   listening room, or does a house need its own grant? And is a house a real
+   broadcast (everyone on the same second) or a shared queue each listener starts
+   from the top? *(proposal only — see `roadmap.md` § Phase 7)*
 
 ## 9. Metrics we collect
 

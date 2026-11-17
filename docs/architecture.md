@@ -125,6 +125,7 @@ Conventions (deliberately identical to the sibling `overlay` project):
 | `djs` | `/api/djs` | DJ directory, profile, tracks spun |
 | `podcasts` | `/api/podcasts` | Shows, episodes, artist/song links |
 | `events` | `/api/events` | Events, lineups |
+| `competitions` | `/api/competitions` | Three-stage playlist voting, committee, published results |
 | `reports` | `/api/reports` | Report an issue against any entity |
 | `admin` | `/api/admin` | Roles, audit log, moderation dashboard data |
 | `workers/youtube-sync` | — | Verified artist uploads playlist import; drafts only |
@@ -157,9 +158,15 @@ User ──< Session
  ├──< DjTrack >── Dj (profile) ──< EventDj >── Event
  │
  ├──< Report (polymorphic target)
+ ├──< CompetitionCommitteeMember >── Competition
+ ├──< CompetitionVote >── Competition
  └──< AuditLog
 
 Podcast ──< PodcastEpisode ──(optional)──> Song / Artist
+
+Competition ──< CompetitionStage ──< CompetitionStageEntrant >── CompetitionEntry
+     │                └──< CompetitionVote
+     └──< CompetitionEntry
 ```
 
 Modelling decisions worth knowing:
@@ -185,6 +192,14 @@ Modelling decisions worth knowing:
    (`EventArtist`, `EventDj`) so removal/ordering is explicit.
 6. **`Report` has no foreign keys to its target** — `targetType` + `targetId` —
    because it spans many entities and an FK per type would explode the schema.
+7. **A competition's stages own their own entrants and votes.**
+   `CompetitionStageEntrant` is a row per (stage, entry), so an entry eliminated
+   in the quarterfinal is still listed there after the final. The unique index
+   `(stageId, voterKey)` is what makes a second vote impossible — the database
+   enforces it, not the service. Committee removal is a soft delete
+   (`removedAt`) so past votes stay attributable. The ranking, tie and winner
+   rules are pure functions in `packages/shared/src/competition.ts`, shared by
+   the API and the results page so the two can never disagree.
 
 ## 5. Lyrics pipeline
 
@@ -417,6 +432,38 @@ Page sizes are 20 songs. `/songs` and `/artists/<slug>` both paginate, and
 uploads is fully reachable. Every list row — on `/songs`, the home page and an
 artist page — carries a play button that starts the persistent player, so a
 synced song plays exactly like a seeded one.
+
+**Filtering and ordering are URL state, rendered on the server.** `/songs` and
+`/artists/<slug>` accept `sync`, `language` and `sort` alongside `q` and
+`artist`; the filter bar (`apps/web/app/songs/SongFilters.tsx`) is a set of
+**anchors**, not inputs, so a filtered view is shareable, crawlable and correct
+on the back button with no client state. The parser (
+`packages/shared/src/catalogue-query.ts`) is the single contract: the web app
+builds URLs with `catalogueSearchParams` and the API validates them with
+`parseCatalogueQuery`.
+
+Two columns make the sort cheap, both denormalised on `Song` so no query joins
+`LyricVersion`:
+
+| Column | Purpose | Index |
+|---|---|---|
+| `syncedVersionId` | the live timed version (also what `sync=` filters on) | `(status, syncedVersionId)` |
+| `syncedAt` | when that version was published, for `sort=recently-synced` | `(status, syncedAt)` |
+
+`syncedVersionId` is a cuid, so ordering by it orders by creation batch rather
+than by time. `syncedAt` exists for exactly that reason and is written beside
+`syncedVersionId` in every publish, edit and unpublish path in
+`admin.service.ts` — the two must never disagree. The migration backfills
+`syncedAt` from `updatedAt` once; that is approximate by design and commented as
+such.
+
+`sort=recently-synced` forces `sync=synced` (a song with no timed version has no
+sync date), and every order ends on `id` so pagination cannot repeat or skip a
+song. `sort=artist` orders by the credited artist's name: Prisma cannot order a
+parent by a related field's value, so `artistOrderedPage` reads the keys (id,
+title, artist names), sorts them in memory and fetches one page of rows. The key
+query is four narrow columns, so the cost is bounded; ordering by credit count
+instead was tried and interleaved different artists by title.
 
 ## 6. Web rendering
 

@@ -134,7 +134,7 @@ type Artist = {
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| GET | `/api/songs?q=&artist=&status=&page=` | — | Catalogue browse |
+| GET | `/api/songs?q=&artist=&sync=&language=&sort=&page=` | — | Catalogue browse |
 | GET | `/api/songs/feeds` | — | Home shelves: `{ randomSongs, newSongs, syncedSongs, emergingArtists }` |
 | GET | `/api/songs/:slug` | — | Playback metadata |
 | GET | `/api/songs/:slug/lyrics` | — | **One payload per song** |
@@ -151,6 +151,7 @@ type Song = {
   releaseDate: string | null;      // YYYY-MM-DD
   durationMs: number | null;
   status: 'draft' | 'pending' | 'published' | 'unpublished';
+  syncedAt: string | null;             // ISO 8601; set only when a timed version is live
   lyrics: { syncStatus: 'unsynchronized' | 'synchronized'; versionId: string | null };
 };
 ```
@@ -158,6 +159,42 @@ type Song = {
 `GET /api/songs/:slug/lyrics` → the payload defined in
 [`lyrics-format.md`](./lyrics-format.md) §3. Returns `404` when the song has no
 published version — the player then renders the "lyrics coming soon" state.
+
+#### Catalogue query
+
+```ts
+type SongQuery = {
+  q?: string;                                  // title, case-insensitive substring
+  artist?: string;                             // artist slug
+  sync?: 'synced' | 'unsynced';
+  language?: 'sheng' | 'swahili' | 'english' | 'mixed';
+  sort?: 'newest' | 'title' | 'artist' | 'recently-synced';  // default 'newest'
+  page?: number;                               // 1-based, clamped to 10,000
+};
+```
+
+Parsing and validation live in `packages/shared/src/catalogue-query.ts`
+(`parseCatalogueQuery`, `compileOrderPlan`, `catalogueSearchParams`), so the API
+and the web app build and read exactly the same URLs.
+
+- **An unknown `sort`, `sync` or `language` is a `400`**, not a silent fallback.
+  Every bad field is reported in one response:
+  `{ "errors": [{ "field": "sort", "value": "alphabetical", "message": "..." }] }`.
+  A page that ignores `sort=title` looks like an answer and is not one.
+- **`page` is the one lenient field.** A non-numeric or non-positive value is
+  clamped to 1, because a mangled link is not a request for a different list.
+- **`sort=recently-synced` implies `sync=synced`.** A song that has never been
+  timed has no `syncedAt`, so including it would order a list by a column that
+  is null for half its rows.
+- **Every order ends on `id`**, so two songs released on the same day cannot
+  swap places between pages and appear twice or not at all.
+- **`sort=artist`** orders by the credited artist's name. Prisma cannot order a
+  parent by a related field's *value*, so the keys are read and sorted (by
+  name, then title, then id) before one page of rows is fetched — not ordered by
+  credit count, which interleaved different artists by title. Songs with no
+  credited artist — the "attribution pending" rows — sort last.
+- `sync` filters on the denormalised `Song.syncedVersionId`; the two views
+  partition the published catalogue (`synced.total + unsynced.total === total`).
 
 ### Home shelves (`GET /api/songs/feeds`)
 
@@ -169,6 +206,9 @@ type HomeFeeds = {
   emergingArtists: { slug: string; name: string; imageUrl: string | null; publishedSongs: number }[];
 };
 ```
+
+The `syncedSongs` shelf links to `/songs?sync=synced&sort=recently-synced`
+("See all synced"): six songs is a shelf, not the timed catalogue.
 
 `randomSongs` is what the home page's "Start here" shelf renders. It picks a
 random window of the published catalogue (a random `skip`, not
@@ -372,6 +412,78 @@ type DrillEvent = {
 > Buying a ticket is **always** an outbound link in v1. No payment endpoint
 > exists, and none should be added without a product decision (see
 > [`product.md`](./product.md) §4.2).
+
+## Competitions
+
+Playlist competitions run three stages — quarterfinal → semifinal → final —
+with backend-enforced voting. The rules (ranking, ties, the advancing cut, the
+winner) live in `packages/shared/src/competition.ts` and are unit-tested; the
+API only decides which rows feed them.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/competitions` | — | Published competitions. Drafts are never listed |
+| GET | `/api/competitions/:slug` | optional | Every stage tallied. Drafts are 404 unless staff |
+| POST | `/api/competitions/:slug/vote` | per `voterScope` | `{ entryId, deviceToken? }` |
+| POST | `/api/competitions/:slug/committee` | admin | `{ email, role? }` — appoint a member |
+| DELETE | `/api/competitions/:slug/committee/:userId` | admin | `{ reason? }` — soft delete |
+| POST | `/api/competitions/:slug/stages/:stageId/open` | admin | Open a stage for voting |
+| POST | `/api/competitions/:slug/stages/:stageId/close` | admin | Close a stage and freeze its result |
+| POST | `/api/competitions/:slug/stages/:stageId/tiebreak` | admin | `{ entryId, reason }` — resolve a cut-line tie |
+| GET | `/api/competitions/:slug/stages/:stageId/votes` | admin | The vote ledger for a stage |
+| POST | `/api/competitions/:slug/votes/:voteId/invalidate` | admin | `{ reason }` — stop a vote counting |
+
+```ts
+type StageTally = {
+  stageId: string;
+  kind: 'quarterfinal' | 'semifinal' | 'final';
+  order: number;
+  title: string;
+  status: 'pending' | 'voting_open' | 'voting_closed' | 'completed';
+  advancing: number;          // 0 for the final
+  totalVotes: number;         // valid votes only
+  standings: {
+    entryId: string; title: string; curator: string;
+    votes: number;
+    rank: number;             // equal votes share a rank (1, 2, 2, 4)
+    advancing: boolean;
+    tiedAtCutoff: boolean;
+  }[];
+  winnerEntryId: string | null;
+  tiebreakRequired: boolean;  // top two cannot be separated
+  tiedAtCutoff: boolean;      // a tie straddles the advancing cut
+  tiebreakEntryId: string | null;
+};
+```
+
+### The rules, and why they are where they are
+
+- **One vote per voter per stage.** The unique index `(stageId, voterKey)` is
+  what makes a second vote impossible — the service does not have to win a race
+  to enforce it. A duplicate answers `409`.
+- **Ties are never broken automatically.** Equal votes share a rank. A tie that
+  straddles the cut line is reported (`tiedAtCutoff`) and blocks the next stage
+  until an admin records a decision with a reason (`tiebreak`).
+- **A stage with no votes cannot be closed.** Closing it would advance whoever
+  happened to be listed first.
+- **A later stage cannot open until the previous one is closed** with a decided
+  cut. Its entrants are replaced by the previous stage's advancers on open.
+- **Invalidated votes never count**, but they stay in the table so the record is
+  complete.
+- **Results are public as soon as a stage closes.** The quarterfinal stays
+  readable while the final is being voted on.
+
+### The device rule
+
+Live, a vote is bound to one device per account: the first device that votes
+registers, and a second device is refused. The browser keeps a random token in
+`localStorage` (`apps/web/lib/device.ts`) and sends it with the vote; the API
+stores only its SHA-256 (`CompetitionVote.deviceHash`).
+
+The rule applies **only when a device token is presented**, which is why seeded
+and test votes (no token) still work. A browser that blocks storage votes
+without one. Clearing `localStorage` presents a new device — see
+[`runbook.md`](./runbook.md#competition-voting) for what that means in practice.
 
 ## Authentication and account
 

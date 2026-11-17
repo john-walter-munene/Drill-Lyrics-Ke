@@ -21,7 +21,7 @@ no Postgres. Full details in [`docs/runbook.md`](docs/runbook.md).
 ### Daily development
 
 ```bash
-npm run dev:stack       # build + start; hot reload for api (:4000) and web (:3000)
+npm run dev:stack       # build + start; hot reload for api (:4100) and web (:3100)
 npm run dev:stack:ps    # both containers should report (healthy)
 npm run dev:stack:logs  # tail logs
 npm run dev:stack:down  # stop (database data is kept)
@@ -54,8 +54,8 @@ npm install
 cp .env.example .env     # point DATABASE_URL at your Postgres
 npm run prisma:migrate
 npm run db:seed
-npm run dev              # web  :3000
-npm run dev:api          # api  :4000
+npm run dev              # web  :3100
+npm run dev:api          # api  :4100
 ```
 
 1. Branch: `feat/short-description` or `fix/short-description`.
