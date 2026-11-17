@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { rankByRelevance, relevanceScore } from './relevance.ts';
+import { rankByRelevance, relevanceScore } from '../../../../apps/api/src/modules/search/relevance.ts';
 
 test('tiers order exact, prefix, word-start, substring, body', () => {
   const query = 'masicka';

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseSmtpPort, resolveSmtpSettings } from './smtp-config.ts';
+import { parseSmtpPort, resolveSmtpSettings } from '../../../../apps/api/src/modules/mail/smtp-config.ts';
 
 /** A minimal valid environment; each test overrides what it is about. */
 const VALID = {

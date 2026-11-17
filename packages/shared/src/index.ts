@@ -1,5 +1,6 @@
 export * from './types.ts';
 export * from './catalogue-query.ts';
+export * from './submissions.ts';
 export * from './lyrics.ts';
 export * from './lyrics-markdown.ts';
 export * from './review-notifications.ts';

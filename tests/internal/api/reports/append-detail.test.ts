@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { appendDetail } from './report-detail.ts';
+import { appendDetail } from '../../../../apps/api/src/modules/reports/report-detail.ts';
 
 /**
  * Duplicate reports collapse into one row. The row's `detail` is the *first*

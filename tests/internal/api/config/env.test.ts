@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import {
   collectConfigProblems,
   MIN_SECRET_LENGTH,
-} from './config.ts';
+} from '../../../../apps/api/src/common/config.ts';
 
 const strong = 'a'.repeat(MIN_SECRET_LENGTH);
 

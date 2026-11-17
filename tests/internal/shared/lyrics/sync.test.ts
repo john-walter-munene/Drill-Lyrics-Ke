@@ -8,7 +8,7 @@ import {
   resolveSettings,
   type ActivityCurve,
   type SyncSettings,
-} from './lyric-sync.ts';
+} from '../../../../packages/shared/src/lyric-sync.ts';
 
 const SAMPLE_RATE = 16_000;
 

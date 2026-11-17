@@ -60,6 +60,8 @@ apps/api         NestJS modular monolith (modules/, common/, workers/)
 apps/web         Next.js App Router (app/, components/player, lib/)
 packages/shared  Types + pure lyrics logic shared by both apps
 prisma/          Schema, migrations, seed
+tests/internal/  Unit tests, grouped by the feature they target (see its README)
+e2e/             Playwright flows against a live stack
 .env.example     THE environment file (copy to .env at the repo root)
 infra/           docker-compose.yml (prod) + docker-compose.dev.yml (hot reload)
                  + backend entrypoint
@@ -171,7 +173,7 @@ Full runbook — ports, configuration, verification, troubleshooting:
 | `npm run build` | Build shared → api → web |
 | `npm run typecheck` | TypeScript across workspaces |
 | `npm run lint` | ESLint across the workspace, warnings fail the run |
-| `npm test` | Unit tests (pure logic, no DB) — shared, API, web |
+| `npm test` | Unit tests (pure logic, no DB) — `tests/internal/`, grouped by feature |
 | `npm run smoke:sync-estimate` | Live-stack check of the admin server-side timing estimator |
 | `npm run smoke:account-flows` | Live-stack check of password reset and account deletion |
 | `npm run smoke:confirmation-export` | Live-stack check of email confirmation and data export |

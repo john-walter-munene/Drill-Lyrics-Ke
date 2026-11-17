@@ -106,6 +106,10 @@ play < 2.5 s, Lighthouse a11y ≥ 95.
 - [x] `POST /api/lyrics/submissions` (validated, throttled, anonymous or account-linked)
 - [x] Upload a Markdown file + paste editor
 - [x] `/admin` review queue: preview, approve, request changes, reject
+- [x] Resubmit after changes requested: contributor edits the same submission and
+      returns it to `pending` (`PUT /api/lyrics/submissions/:id`). Before this the
+      reviewer's note was readable but unactionable — the only write route started
+      a new submission and lost the conversation. Rejection stays terminal.
 - [x] `AuditLog` writes on review, artist intake, sync and role actions
 - [x] Markdown import/export scripts (`content/`)
 - [x] Notifications on review outcome (email, mock provider first)

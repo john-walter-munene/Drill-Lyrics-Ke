@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { redactEmail } from './redact.ts';
+import { redactEmail } from '../../../../apps/api/src/common/redact.ts';
 
 test('redactEmail keeps the domain and masks the local part', () => {
   assert.equal(redactEmail('someone@example.com'), 's***@example.com');

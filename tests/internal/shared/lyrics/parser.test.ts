@@ -8,7 +8,7 @@ import {
   timestampToMs,
   withDerivedEnds,
   type LyricLine,
-} from './lyrics.ts';
+} from '../../../../packages/shared/src/lyrics.ts';
 
 const lines: LyricLine[] = [
   { index: 0, startMs: 12_500, text: 'first' },

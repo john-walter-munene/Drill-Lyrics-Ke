@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyUpload, parseIsoDuration } from './youtube-classify.ts';
+import { classifyUpload, parseIsoDuration } from '../../../../apps/api/src/workers/youtube-classify.ts';
 
 /**
  * The classifier decides what enters the catalogue, so the cases below are the

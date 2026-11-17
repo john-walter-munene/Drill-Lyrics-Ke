@@ -224,6 +224,7 @@ shelves are ordered and safe to cache.
 | POST | `/api/lyrics/submissions` | — | `{ songId, markdown, note?, creditPublicly? }`; anonymous or account-linked |
 | GET | `/api/lyrics/submissions/mine` | member | Caller's submissions + status |
 | GET | `/api/lyrics/submissions/:id` | owner | One of the caller's submissions |
+| PUT | `/api/lyrics/submissions/:id` | owner | Edit and resend a submission whose changes were requested |
 
 ```json
 {
@@ -267,6 +268,40 @@ The `errors` keys are the parser's own fields — `body`, `timestamps`,
 `frontmatter`, `title`, `youtubeVideoId`, `lyrics`, `annotations` — and only the
 fields that failed appear. An empty `markdown` is rejected by request validation
 (`400`) before the parser runs.
+
+### Resubmitting (`PUT /api/lyrics/submissions/:id`)
+
+A reviewer who requests changes is telling the contributor what to fix. This
+route is how the contributor acts on that: it edits the **same** submission and
+returns it to `pending`, rather than making them start a new one and retype the
+document.
+
+```json
+{ "markdown": "[00:12.500] …", "note": "Fixed line 3's timestamp" }
+```
+
+- **No `songId`.** A resubmission edits text; it does not move a contribution to
+a different song. A wrong song is a different submission.
+- **Only the owner may resubmit**, and only while the row is `changes_requested`
+  or `draft`. `rejected` is terminal (`product.md` §5.3); such a contributor
+  submits afresh.
+- The row keeps its id, so the review history and audit trail stay attached to
+  the contribution the note was about. Review fields are cleared, because the
+  old note describes text that no longer exists.
+- `markdown` is re-validated exactly as on create, with the same parser and the
+  same `errors` envelope. The rule is not looser because a reviewer is waiting.
+- Written to the audit log as `lyrics.resubmitted` with `{ from, to }`.
+
+Responses: `200` → `{ id, status: 'pending' }`; `401` → no session; `404` → no
+row with that id **belonging to the caller** (a missing row and someone else's
+row answer identically, so ids cannot be probed); `409` → the row's status does
+not allow a resubmission (`"A submission that is rejected cannot be resubmitted"`);
+`422` → the new text cannot be read.
+
+Eligibility is decided by `checkResubmission` in
+`packages/shared/src/submissions.ts`, which the account page (`/account`) also
+uses to decide which rows show an Edit control — so the button and the `409`
+cannot disagree.
 
 A submission is never published by this endpoint. It is `pending`, a moderator
 reviews it, and only an approval creates the public `LyricVersion` — see

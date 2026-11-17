@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { looksLikeMarkdownDocument } from './submission-shape.ts';
+import { looksLikeMarkdownDocument } from '../../../../apps/api/src/common/submission-shape.ts';
 
 test('a leading --- fence marks a Markdown document', () => {
   assert.equal(looksLikeMarkdownDocument('---\ntitle: "T"\n---\n\nline'), true);

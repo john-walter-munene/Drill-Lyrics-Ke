@@ -196,7 +196,7 @@ export async function exportAccountData(): Promise<{ ok: true; filename: string 
 }
 
 export async function apiRequest<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<{ ok: true; data: T } | { ok: false; status: number; message: string | string[] }> {
