@@ -9,8 +9,11 @@ import { SESSION_COOKIE } from '../../common/session-auth.guard';
  * wrong `Path` is not cleared at all.
  */
 
-/** Used only when `NEXT_PUBLIC_SITE_URL` is unset (local runs, tests). */
-export const SITE_URL_FALLBACK = 'http://localhost:3000';
+/**
+ * Used only when `NEXT_PUBLIC_SITE_URL` is unset (local runs, tests).
+ * DrillKe's own web port (see .env `WEB_PORT`), not the generic 3000.
+ */
+export const SITE_URL_FALLBACK = 'http://localhost:3100';
 
 /** Origin for links in outgoing mail. No trailing slash. */
 export function siteUrl(): string {

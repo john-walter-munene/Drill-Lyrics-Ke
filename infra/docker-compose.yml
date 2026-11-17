@@ -7,10 +7,15 @@
 # Containers (visible in Docker Desktop under the `drill-lyrics-key` project):
 #
 #   drill-lyrics-key-api   backend: NestJS API + PostgreSQL 16 in ONE container
-#                          → http://localhost:4000/api/health/ready
-#                          → Postgres also reachable from the host on :5432
+#                          → http://localhost:4100/api/health/ready
+#                          → Postgres also reachable from the host on 127.0.0.1:5440
 #   drill-lyrics-key-web   frontend: Next.js production build
-#                          → http://localhost:3000
+#                          → http://localhost:3100
+#
+# PORTS
+#   Host ports are this project's own range (web 3100 · api 4100 · db 5440, see
+#   .env), so DrillKe, The Expertise Wins (3200/3201/5441) and AppKings Voting
+#   (3300/3301/5442) can run side by side. The dev stack uses the same range.
 #
 # The database runs inside the backend container on purpose: it keeps the stack
 # to two containers and makes `docker compose up` self-initialising (the
@@ -58,8 +63,10 @@ services:
       # from the root .env through `env_file` above. Repeating a key here would
       # shadow the .env value instead of passing it through.
     ports:
-      - "${API_PORT:-4000}:4000"   # API
-      - "${DB_PORT:-5432}:5432"    # PostgreSQL (psql, Prisma Studio, etc.)
+      - "${API_PORT:-4100}:4000"   # API
+      # PostgreSQL (psql, Prisma Studio, etc.) — loopback + this project's port.
+      # Publishing 0.0.0.0:5432 would expose it and collide with a local server.
+      - "${DB_PORT:-127.0.0.1:5440}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -76,8 +83,8 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         # NEXT_PUBLIC_* are baked into the browser bundle at build time.
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
-        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4100}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3100}
     image: drillke-web:latest
     restart: unless-stopped
     env_file:
@@ -95,7 +102,7 @@ services:
       # Docker DNS for server components; the browser uses NEXT_PUBLIC_API_URL.
       API_INTERNAL_URL: http://api:4000
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${WEB_PORT:-3100}:3000"
     depends_on:
       api:
         condition: service_healthy

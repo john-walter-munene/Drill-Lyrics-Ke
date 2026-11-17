@@ -36,17 +36,15 @@ export default function SongPlayerView({
   }, [play, track, song.slug, song.title, song.youtubeVideoId, song.artists, queue, playbackState]);
 
   return (
-    <div className={`player-layout${playbackMode === 'listen' ? ' player-layout--listen' : ''}`} style={{ marginTop: '1.5rem' }}>
-      <div className="panel">
-        <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
+    <div className={`player-layout song-page${playbackMode === 'listen' ? ' player-layout--listen' : ''}`}>
+      <div className="panel song-page__meta">
+        <p className="muted">
           {playbackMode === 'listen'
             ? 'Listen mode keeps the YouTube player visible and interactive while giving the lyrics more room.'
             : 'Watch the YouTube video while the lyrics stay alongside it.'}
         </p>
         {song.releaseDate ? (
-          <p className="muted" style={{ margin: '0.5rem 0 0', fontSize: '0.8rem' }}>
-            Released {song.releaseDate}
-          </p>
+          <p className="muted song-page__released">Released {song.releaseDate}</p>
         ) : null}
       </div>
       <LyricsView lyrics={lyrics} />

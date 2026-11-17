@@ -1,12 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  compileOrderPlan,
+  parseCatalogueQuery,
+  type OrderPlan,
+  type RawCatalogueQuery,
+} from '@drillke/shared';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma.service';
 import { selectPublishedVersion } from './published-version';
 
-export interface ListSongsQuery {
-  q?: string;
-  artist?: string;
-  page?: string;
-}
+/**
+ * The query as it arrives on the wire. Parsing and validation live in
+ * `packages/shared/src/catalogue-query.ts`, so the web app and the API cannot
+ * disagree about what a sort means or which values are legal.
+ */
+export type ListSongsQuery = RawCatalogueQuery;
 
 @Injectable()
 export class SongsService {
@@ -109,26 +117,48 @@ export class SongsService {
     };
   }
 
+  /**
+   * The published catalogue, 20 a page.
+   *
+   * Filtering and ordering are described once in `parseCatalogueQuery` and
+   * `compileOrderPlan` (shared, unit-tested) and simply carried out here. A
+   * channel import can hold 150 uploads, so "show me only the songs I can read
+   * along to" and "what was timed most recently?" have to be answerable in a
+   * URL, not only by scrolling page 1 forever.
+   *
+   * An unknown `sort`/`sync`/`language` is a 400 rather than a silent
+   * fallback: a page that ignores `sort=title` looks like an answer and is not.
+   */
   async list(query: ListSongsQuery) {
-    const page = this.pageNumber(query.page);
+    const parsed = parseCatalogueQuery(query);
+    if (!parsed.ok) {
+      throw new BadRequestException({
+        message: parsed.errors.map((error) => error.message),
+        errors: parsed.errors,
+      });
+    }
+    const { q, artist, language, sort, page } = parsed.query;
+    const plan = compileOrderPlan(parsed.query);
     const pageSize = 20;
     const where = {
       status: 'published' as const,
-      ...(query.q?.trim() ? { title: { contains: query.q.trim(), mode: 'insensitive' as const } } : {}),
-      ...(query.artist ? { artists: { some: { artist: { slug: query.artist } } } } : {}),
+      ...(q ? { title: { contains: q, mode: 'insensitive' as const } } : {}),
+      ...(artist ? { artists: { some: { artist: { slug: artist } } } } : {}),
+      ...(language ? { language } : {}),
+      ...(plan.sync === 'synced' ? { syncedVersionId: { not: null } } : {}),
+      ...(plan.sync === 'unsynced' ? { syncedVersionId: null } : {}),
     };
     const [total, songs] = await Promise.all([
       this.prisma.song.count({ where }),
-      this.prisma.song.findMany({
-        where,
-        orderBy: [{ releaseDate: 'desc' }, { title: 'asc' }],
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        include: {
-          artists: { include: { artist: true }, orderBy: { position: 'asc' } },
-          versions: { where: { published: true }, orderBy: { version: 'desc' }, take: 1 },
-        },
-      }),
+      sort === 'artist'
+        ? this.artistOrderedPage(where, page, pageSize)
+        : this.prisma.song.findMany({
+          where,
+          orderBy: this.orderFor(plan),
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+          include: this.listInclude(),
+        }),
     ]);
     return {
       items: songs.map((song) => this.toSong(song)),
@@ -137,6 +167,71 @@ export class SongsService {
       pageSize,
       totalPages: Math.max(1, Math.ceil(total / pageSize)),
     };
+  }
+
+  private listInclude() {
+    return {
+      artists: { include: { artist: true }, orderBy: { position: 'asc' as const } },
+      versions: { where: { published: true }, orderBy: { version: 'desc' as const }, take: 1 },
+    };
+  }
+
+  /**
+   * Prisma wants literal order objects, so the plan's keys are switched over
+   * rather than spread from a computed property name. Every branch ends on
+   * `id`, which is what keeps paging stable (see `compileOrderPlan`).
+   */
+  private orderFor(plan: OrderPlan): Prisma.SongOrderByWithRelationInput[] {
+    if (plan.keys[0] === 'syncedAt') {
+      return [{ syncedAt: 'desc' }, { id: 'asc' }];
+    }
+    if (plan.keys[0] === 'title') {
+      return [{ title: 'asc' }, { id: 'asc' }];
+    }
+    return [{ releaseDate: 'desc' }, { id: 'asc' }];
+  }
+
+  /**
+   * "By artist", correctly.
+   *
+   * Prisma cannot order a parent by a related field's *value*, and ordering by
+   * `artists._count` is not that: it counts credits, so two songs by Wakadinali
+   * and one by Natty interleave by title rather than by artist. The first
+   * version of this did exactly that, which is why the page is ordered here.
+   *
+   * So: read the keys, sort in memory, then fetch only the rows on this page.
+   * The key query selects four narrow columns, so even a catalogue of a few
+   * thousand songs is a small payload. Songs with no credited artist sort last
+   * — a listener looking up an artist should never land on an unattributed row
+   * — and every tie breaks on `id`, so paging stays stable.
+   */
+  private async artistOrderedPage(
+    where: Prisma.SongWhereInput,
+    page: number,
+    pageSize: number,
+  ) {
+    const keys = await this.prisma.song.findMany({
+      where,
+      select: { id: true, title: true, artists: { select: { artist: { select: { name: true } } } } },
+    });
+    const primaryName = (row: (typeof keys)[number]) =>
+      row.artists.map(({ artist }) => artist.name).sort((a, b) => a.localeCompare(b))[0] ?? null;
+    keys.sort((a, b) => {
+      const nameA = primaryName(a);
+      const nameB = primaryName(b);
+      if (nameA !== nameB) {
+        if (nameA == null) return 1;
+        if (nameB == null) return -1;
+        return nameA.localeCompare(nameB);
+      }
+      const byTitle = a.title.localeCompare(b.title);
+      return byTitle !== 0 ? byTitle : a.id.localeCompare(b.id);
+    });
+    const ids = keys.slice((page - 1) * pageSize, page * pageSize).map((row) => row.id);
+    const songs = await this.prisma.song.findMany({ where: { id: { in: ids } }, include: this.listInclude() });
+    // `in` does not preserve order; restore the sorted one.
+    const byId = new Map(songs.map((song) => [song.id, song]));
+    return ids.map((id) => byId.get(id)).filter((song): song is NonNullable<typeof song> => Boolean(song));
   }
 
   async bySlug(slug: string) {
@@ -194,6 +289,7 @@ export class SongsService {
     releaseDate: Date | null;
     durationMs: number | null;
     status: string;
+    syncedAt: Date | null;
     artists: { isPrimary: boolean; position: number; artist: { slug: string; name: string } }[];
     versions: { id: string; syncStatus: string }[];
   }) {
@@ -213,15 +309,11 @@ export class SongsService {
       releaseDate: song.releaseDate?.toISOString().slice(0, 10) ?? null,
       durationMs: song.durationMs,
       status: song.status,
+      syncedAt: song.syncedAt?.toISOString() ?? null,
       lyrics: {
         syncStatus: publishedVersion?.syncStatus ?? 'unsynchronized',
         versionId: publishedVersion?.id ?? null,
       },
     };
-  }
-
-  private pageNumber(value?: string) {
-    const page = Number(value ?? 1);
-    return Number.isInteger(page) && page > 0 ? Math.min(page, 10_000) : 1;
   }
 }

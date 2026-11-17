@@ -1,8 +1,10 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
+import { catalogueSearchParams, parseCatalogueQuery, type CatalogueQuery } from '@drillke/shared';
 import { getArtist, listSongs } from '../../../api';
 import { artistJsonLd, pageMetadata } from '../../../lib/seo';
+import SongFilters from '../../songs/SongFilters';
 import SongList from '../../songs/SongList';
 
 export const revalidate = 300;
@@ -27,16 +29,24 @@ export default async function ArtistPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; sync?: string; sort?: string }>;
 }) {
   const { slug } = await params;
-  const { page: pageParam } = await searchParams;
-  const page = Number(pageParam ?? 1) || 1;
-  const [artist, songs] = await Promise.all([getArtist(slug), listSongs({ artist: slug, page })]);
+  const raw = await searchParams;
+  const query = readQuery(raw);
+  const [artist, songs] = await Promise.all([
+    getArtist(slug),
+    listSongs({ ...query, artist: slug }),
+  ]);
   if (!artist) notFound();
+
   // A synced channel can hold hundreds of uploads, so the page cannot stop at
-  // the first 20: the rest of the catalogue has to be reachable from here.
-  const pageHref = (target: number) => (target <= 1 ? `/artists/${slug}` : `/artists/${slug}?page=${target}`);
+  // the first 20: the rest of the catalogue has to be reachable from here, and
+  // a filtered page has to keep its filter while paging.
+  const pageHref = (target: number) => {
+    const qs = catalogueSearchParams({ ...query, artist: slug, page: target });
+    return qs ? `/artists/${slug}?${qs}` : `/artists/${slug}`;
+  };
 
   return (
     <main className="container">
@@ -74,11 +84,18 @@ export default async function ArtistPage({
       <h2 className="page-section" style={{ fontSize: '1.1rem' }}>
         Songs{songs.total ? <span className="muted" style={{ fontWeight: 400 }}> · {songs.total}</span> : null}
       </h2>
+
+      <SongFilters basePath={`/artists/${slug}`} query={query} total={songs.total} />
+
       {songs.items.length === 0 ? (
         <p className="muted">
-          {artist.youtubeChannelId
-            ? 'Their catalogue is being imported — songs appear here as they are read from the channel.'
-            : 'No songs in the catalogue yet.'}
+          {query.sync === 'synced'
+            ? 'None of their songs are synchronized yet. Switch to "Not yet" to see what is waiting for timing.'
+            : query.sync === 'unsynced'
+              ? 'Every one of their published songs is synchronized. Switch to "Synchronized" to read along.'
+              : artist.youtubeChannelId
+                ? 'Their catalogue is being imported — songs appear here as they are read from the channel.'
+                : 'No songs in the catalogue yet.'}
         </p>
       ) : (
         <SongList songs={songs.items} />
@@ -95,4 +112,12 @@ export default async function ArtistPage({
       ) : null}
     </main>
   );
+}
+
+/** Same contract as `/songs`; an illegal value falls back to the default order. */
+function readQuery(params: { page?: string; sync?: string; sort?: string }): CatalogueQuery {
+  const parsed = parseCatalogueQuery(params);
+  if (parsed.ok) return parsed.query;
+  const page = Number(params.page ?? 1);
+  return { sort: 'newest', page: page > 0 ? page : 1 };
 }

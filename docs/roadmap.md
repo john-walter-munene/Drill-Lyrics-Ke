@@ -269,17 +269,44 @@ Shipped this pass:
   songs. The SQL and its query plan are unchanged — ranking sorts at most eight
   rows per type.
 
+**Catalogue filters and ordering (November 2026).** `/songs` and every artist
+page now carry `sync`, `language` and `sort` in the URL, rendered server-side as
+links (`SongFilters.tsx`) so a filtered view is shareable and back-button
+correct. `sort=recently-synced` orders by a new `Song.syncedAt` column —
+`syncedVersionId` is a cuid, so it ordered by creation batch, not by time — and
+the home "Synced this week" shelf links to it. The query contract is parsed once
+in `packages/shared/src/catalogue-query.ts`, so the web app and the API cannot
+disagree about what a sort means or which values are legal (an unknown sort is a
+`400`, not a silent fallback).
+
+Deliberately **not** built yet, because it belongs after synchronization lands:
+using `sort=unsynced` and `language=` as the moderator's timing work queue
+("untimed sheng songs, oldest first"). The sort exists so that queue is cheap to
+build, but it is not a module today.
+
 Still open in this phase: typo tolerance, which needs a trigram index and a
 migration, and analytics, which needs a provider decision before any code.
 
 ## Phase 5 — Community
 
 - [ ] User playlists (public/private)
-- [ ] Competitions and challenges with backend-enforced voting
+- [x] Competitions and challenges with backend-enforced voting
 - [ ] Contributor reputation and trusted-contributor fast track
 - [ ] Artist claims (verification codes)
 
 **Exit:** a competition runs end to end with an auditable vote trail.
+
+> **Competitions — done.** Three stages (quarterfinal → semifinal → final),
+> admin-appointed committee with soft-delete removal, tie detection that blocks
+> the next stage until an organiser decides, and a public results view that
+> keeps every closed stage readable. Rules live in
+> `packages/shared/src/competition.ts` (unit-tested); the API is in
+> `apps/api/src/modules/competitions/`. Seeded by `npm run db:seed:competition`,
+> tested end to end by `npm run smoke:competition`.
+>
+> **Not done:** the device rule is enforced only when a browser presents a
+> device token, so clearing site data presents a new device. For a competition
+> where that matters, use `voterScope: 'account'` or `'committee'`.
 
 ## Phase 6 — Artist support (storefront links)
 
@@ -295,11 +322,64 @@ Deferred until v1 retention is proven. Each item needs a separate decision doc:
 
 - Native checkout (cards + M-Pesa), commission, payouts, refunds, disputes
 - Drill Radio (requires licensing)
+- **Drill Houses** (proposed — see below)
 - PWA install + offline lyrics shell
 - Swahili / Sheng interface strings
 - Word-level lyric highlighting
 - Public read API + partner integrations
 - Drill scenes beyond Kenya
+
+### Drill Houses (proposed)
+
+> **Status: proposal, not scheduled.** No decision doc, no schema, no code. It is
+> recorded here so the idea is not lost and so the questions it raises are asked
+> before anyone builds it.
+
+A **Drill House** is a room a person opens on DrillKe and leaves playing — their
+own tunes, on a loop, for anyone who tunes in. Listeners drop into a house, hear
+what the host is playing, and vibe. No ads, no queue to manage, no account
+required to listen. A house may show video or be audio-only.
+
+**Why it fits.** It is the social form of what the player already does. The
+catalogue answers "what is this song?"; a house answers "what is playing right
+now, and who else is here?" — a reason to come back that a static catalogue does
+not have. It also gives DJs and emerging artists a low-effort surface: open a
+house, play your set, no upload and no rights paperwork.
+
+**Shape it would take, if built.**
+
+- A `DrillHouse` owned by a user: name, slug, description, `videoMode`
+  (`video` | `audio-only`), and a live/offline state.
+- A `DrillHouseTrack` queue — references to existing `Song` rows, so a house
+  plays the catalogue and inherits its lyrics, artwork and rights status. It is
+  **not** an upload path.
+- Playback reuses the existing persistent player and shared clock. A house is a
+  queue with a host and an audience, not a second player.
+- Presence: who is listening now, and what is playing. Ephemeral, not a
+  permanent record of who listened to what.
+
+**Open questions — each must be closed before this is scheduled:**
+
+1. **Rights.** A house is a public performance of the catalogue. Does the
+   existing rights policy (§5.4 of `product.md`) cover it, or does a house need
+   its own grant? This is the blocking question; everything else is engineering.
+2. **Synchronisation.** Do listeners hear the same second as the host (a real
+   broadcast, needing a server-side clock and drift correction), or does each
+   listener start the queue from the top (a shared playlist, far simpler)? The
+   first is the product; the second is what ships first.
+3. **Video.** YouTube's terms govern embedding, and a house that plays video is
+   still an embed. Audio-only is the cheaper default; video is a per-house
+   choice, not a platform mode.
+4. **Moderation.** A house is user-generated public content. Who can open one,
+   what happens when a host plays something reported, and how is a house taken
+   down? The `Report` model already spans entities, so a house is a new
+   `targetType`, not a new system.
+5. **Cost.** Concurrent listeners on a shared clock is the first feature in this
+   roadmap with a real-time server cost. It needs a number before it needs code.
+
+**Deliberately not in scope for a first version:** chat, gifts/tips, host
+monetisation, scheduled shows, and recording a house for later listening. Each
+adds a moderation or payments surface that this roadmap defers elsewhere.
 
 ---
 

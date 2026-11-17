@@ -38,6 +38,17 @@ if ! command -v initdb >/dev/null 2>&1; then
   exit 1
 fi
 
+# Dependencies live in a named volume, not in the image, so a fresh clone has an
+# empty one. The `install` service is profile-gated (it is a one-shot job, not a
+# service) and is therefore NOT started by a plain `up`. Without this check the
+# container would start and die on an unrelated "Cannot find module".
+if [ ! -d /app/node_modules/@drillke ]; then
+  echo "[entrypoint] FATAL: dependencies are not installed in the node_modules volume." >&2
+  echo "[entrypoint] Run this once, then start the stack again:" >&2
+  echo "[entrypoint]   npm run dev:stack:install" >&2
+  exit 1
+fi
+
 # Compose runs this as `entrypoint: ["/app/infra/docker-entrypoint.sh"]` with a
 # bind-mounted repo at /app, so the data directory must live OUTSIDE that mount:
 # a path under /app would be written into the host checkout and survive

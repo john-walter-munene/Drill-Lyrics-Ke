@@ -78,6 +78,8 @@ export interface Song extends SongSummary {
   releaseDate: string | null; // YYYY-MM-DD
   durationMs: number | null;
   status: SongStatus;
+  /** When the live timed version was published. Null unless `syncStatus` is `synchronized`. */
+  syncedAt: string | null; // ISO 8601
   lyrics: {
     syncStatus: SyncStatus;
     versionId: string | null;

@@ -27,7 +27,12 @@ backend that owns the API *and* PostgreSQL, plus one frontend.
 | Backend | `drill-lyrics-key-dev-api` (`infra/Dockerfile.dev`) | `drill-lyrics-key-api-1` (`Dockerfile`) |
 | Frontend | `drill-lyrics-key-dev-web` (`infra/Dockerfile.dev`) | `drill-lyrics-key-web-1` (`apps/web/Dockerfile`) |
 | Reload | hot reload (bind mount) | none — rebuild to pick up changes |
-| Ports | `3000` web · `4000` api · `5432` db | same |
+| Ports (host) | `3100` web · `4100` api · `127.0.0.1:5440` db | same |
+
+> These are DrillKe's own ports, so it can run at the same time as the other
+> projects on this machine: The Expertise Wins uses `3200`/`3201`/`5441` and
+> AppKings Voting uses `3300`/`3301`/`5442`. They live in `.env` as `WEB_PORT`,
+> `API_PORT` and `DB_PORT`.
 
 The database lives inside the backend container by design: two containers
 instead of three, and starting the stack alone produces a migrated, seeded,
@@ -68,8 +73,8 @@ npm run stack:start     # start the existing containers again (no rebuild)
 npm run stack:reset     # stop and wipe the database volume
 ```
 
-URLs (either stack): web → http://localhost:3000 · api readiness →
-http://localhost:4000/api/health/ready
+URLs (either stack): web → http://localhost:3100 · api readiness →
+http://localhost:4100/api/health/ready
 
 > Step-by-step verification, port changes and troubleshooting are in
 > [`runbook.md`](./runbook.md).

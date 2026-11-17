@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import KenyanFlag from './KenyanFlag';
+import BrandMark from './BrandMark';
 import AuthLinks from './AuthLinks';
 
 const NAV_LINKS = [
@@ -15,6 +16,7 @@ const NAV_LINKS = [
   { href: '/djs', label: 'DJs & Mixes' },
   { href: '/podcasts', label: 'Podcasts' },
   { href: '/events', label: 'Events' },
+  { href: '/competitions', label: 'Competitions' },
 ];
 
 const EXPLORE_SECTIONS = [
@@ -33,6 +35,7 @@ const EXPLORE_SECTIONS = [
       { href: '/djs', label: 'DJs & mixes' },
       { href: '/podcasts', label: 'Podcasts' },
       { href: '/events', label: 'Events' },
+      { href: '/competitions', label: 'Playlist competitions' },
     ],
   },
   {
@@ -61,7 +64,7 @@ function Brand() {
       aria-label="Drill Lyrics KE home"
     >
       <span className="site-header__mark" aria-hidden="true">
-        DL
+        <BrandMark className="site-header__mark-crown" />
       </span>
 
       <span className="site-header__brand-copy">
@@ -290,15 +293,37 @@ function MobileMenu({
 export default function SiteHeader() {
   const pathname = usePathname();
   const headerRef = useRef<HTMLElement>(null);
+  const [scrolled, setScrolled] = useState(false);
+  const [compact, setCompact] = useState(false);
 
-  // Publish where the header ends as a CSS variable. The identity bar wraps to
-  // two lines on narrow screens, so the header is taller than its row; the
-  // phone menu sheet (fixed, so it can scroll independently) needs that edge.
+  // The bar is sticky, so once anything has scrolled under it the header
+  // detaches from the top edge: it then gets a shadow, and the identity strip
+  // folds away to give the page back its room. Two thresholds, not one, so a
+  // small scroll near the top does not flicker the whole bar between states.
+  useEffect(() => {
+    const update = () => {
+      const y = window.scrollY;
+      setScrolled(y > 4);
+      setCompact(y > 96);
+    };
+
+    update();
+    window.addEventListener('scroll', update, { passive: true });
+    return () => window.removeEventListener('scroll', update);
+  }, []);
+
+  // Publish the live header height as a CSS variable. The identity bar folds on
+  // scroll (and wraps to two lines on narrow screens), so the height the page
+  // must offset for in-page anchors is only known at runtime.
   useEffect(() => {
     const header = headerRef.current;
     if (!header) return;
 
     const publish = () => {
+      const height = Math.round(header.getBoundingClientRect().height);
+      document.documentElement.style.setProperty('--site-header-height', `${height}px`);
+      // The phone menu sheet is fixed so it can scroll independently, and needs
+      // the header's bottom edge rather than its height.
       header.style.setProperty(
         '--site-header-bottom',
         `${Math.round(header.getBoundingClientRect().bottom)}px`,
@@ -309,15 +334,28 @@ export default function SiteHeader() {
     const observer = new ResizeObserver(publish);
     observer.observe(header);
     window.addEventListener('resize', publish);
+    // Folding the identity strip changes the height mid-transition; the observer
+    // fires per frame, so the variable tracks it rather than jumping at the end.
+    header.addEventListener('transitionend', publish);
 
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', publish);
+      header.removeEventListener('transitionend', publish);
     };
   }, []);
 
   return (
-    <header className="site-header" ref={headerRef}>
+    <header
+      className={[
+        'site-header',
+        scrolled ? 'site-header--scrolled' : '',
+        compact ? 'site-header--compact' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      ref={headerRef}
+    >
       <LocalIdentityBar />
 
       <div className="site-header__inner">

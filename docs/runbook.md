@@ -27,12 +27,16 @@ API and PostgreSQL, plus one frontend container.
 Both are reachable at the same URLs, so **run one at a time** (or change ports
 in `.env` — see [Ports and configuration](#ports-and-configuration)).
 
+DrillKe uses its own port range so it can run alongside the other projects on
+this machine (The Expertise Wins: 3200/3201/5441, AppKings Voting:
+3300/3301/5442) without one stopping the other.
+
 | Service | URL |
 |---|---|
-| Frontend | <http://localhost:3000> |
-| API readiness (API **and** database) | <http://localhost:4000/api/health/ready> |
-| API liveness (process only) | <http://localhost:4000/api/health> |
-| PostgreSQL (from your host) | `localhost:5432` |
+| Frontend | <http://localhost:3100> |
+| API readiness (API **and** database) | <http://localhost:4100/api/health/ready> |
+| API liveness (process only) | <http://localhost:4100/api/health> |
+| PostgreSQL (from your host) | `localhost:5440` |
 
 In Docker Desktop both appear as projects; expand a project to see its two
 containers.
@@ -115,11 +119,11 @@ npm run stack:logs       # tail api + web
 npm run dev:stack:ps
 
 # API + database
-Invoke-RestMethod http://localhost:4000/api/health/ready
+Invoke-RestMethod http://localhost:4100/api/health/ready
 # → {"status":"ok","checks":{"database":"ok"},"timestamp":"..."}
 
 # Frontend
-(Invoke-WebRequest -UseBasicParsing http://localhost:3000).StatusCode
+(Invoke-WebRequest -UseBasicParsing http://localhost:3100).StatusCode
 # → 200
 ```
 
@@ -171,10 +175,10 @@ Key groups (full annotated list in [`.env.example`](../.env.example)):
 
 | Key | Default | Notes |
 |---|---|---|
-| `WEB_PORT` / `API_PORT` / `DB_PORT` | `3000` / `4000` / `5432` | Ports on your machine (Docker only) |
+| `WEB_PORT` / `API_PORT` / `DB_PORT` | `3100` / `4100` / `127.0.0.1:5440` | Ports on your machine (Docker and host development). Unique to DrillKe |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | `drillke` | Database inside the backend container |
 | `JWT_SECRET` | dev placeholder | ≥ 32 chars; **change before exposing anything publicly** |
-| `CORS_ORIGINS` | `http://localhost:3000` | Must match the web origin |
+| `CORS_ORIGINS` | `http://localhost:3100` | Must match the web origin |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | `admin@drillke.local` / `change-me-now` | The first **admin** account. Password ≥ 10 chars or the seed refuses to run and no admin exists |
 | `SEED_ADMIN_RESET_PASSWORD` | `true` | Re-applies the password and admin role on boot. Set `false` after setup |
 | `SEED_ON_START` | `true` | Set `false` to stop re-seeding on every restart |
@@ -182,8 +186,8 @@ Key groups (full annotated list in [`.env.example`](../.env.example)):
 | `YOUTUBE_AUTO_PUBLISH` | `true` | Imported **music** uploads go straight into the public catalogue (`false` = leave them as drafts to review) |
 | `EMBED_WORKER` | `false` | Periodic new-upload sync inside the API process |
 | `YOUTUBE_WORKER_PAGES` | *(all)* | Optional cap, in pages of 50, on one periodic cycle per channel |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:4000` | Baked in at **build** time |
-| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` | Baked in at **build** time |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:4100` | Baked in at **build** time |
+| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3100` | Baked in at **build** time |
 
 > `NEXT_PUBLIC_*` values are compiled into the browser bundle. In the dev stack
 > they are read when the container starts; in the production-shaped stack you
@@ -209,7 +213,7 @@ The seed creates the first admin from `SEED_ADMIN_EMAIL` /
 Connect to the database from your host:
 
 ```powershell
-psql -h localhost -p 5432 -U drillke -d drillke
+psql -h localhost -p 5440 -U drillke -d drillke
 # password: drillke (unless changed)
 ```
 
@@ -308,6 +312,144 @@ pressing **Sync whole channel** is the only way to see new uploads.
 
 ---
 
+## Seeding
+
+There are two seeds. Both are idempotent — re-running one replaces what it
+created rather than duplicating it.
+
+| Command | Creates |
+|---|---|
+| `npm run db:seed` | The admin account, a placeholder artist, DJ, podcast, event and a handful of playback-test songs |
+| `npm run db:seed:competition` | A finished three-stage playlist competition: 8 playlists, 3 closed stages, a winner, a committee with one removed member |
+
+```powershell
+# Host, against the database in .env
+npm run db:seed
+npm run db:seed:competition
+
+# Inside the dev stack
+npm run dev:stack:bg
+docker compose -f infra/docker-compose.dev.yml exec api npm run db:seed:competition
+```
+
+Both need `SEED_ADMIN_PASSWORD` (≥ 10 characters) in `.env`. The seed refuses to
+run without it, and the entrypoint logs `seed skipped … continuing` — the app
+still starts, with no admin.
+
+### Seeding your own competition
+
+`prisma/seed-competition.template.mjs` is a copy-and-edit seed. Everything you
+normally change is in one `CONFIG` block at the top: the slug, the playlists,
+the three stages with their vote counts, and the committee.
+
+```powershell
+Copy-Item prisma/seed-competition.template.mjs prisma/seed-my-cup.mjs
+# edit the CONFIG block
+node prisma/seed-my-cup.mjs
+```
+
+The template validates the config before writing anything, and says what is
+wrong rather than failing on a foreign key:
+
+```text
+Invalid competition config:
+  - semifinal: votes for "not-an-entrant", which is not an entrant
+```
+
+Things worth knowing when editing it:
+
+- **`advancing`** is how many entrants move on. Use `0` for the final, which
+  produces the winner instead.
+- **`entrants`** on the first stage can be omitted to use every entry. On later
+  stages, list the advancers — the seed does not compute them, so a typo here is
+  a bracket that does not match the votes.
+- **`votes`** is the final tally. The seed creates that many distinct voters, so
+  the numbers you write are the numbers the page shows.
+- **`status`** — `results_published` for a finished competition, `voting_open`
+  to leave the last stage open, `draft` to keep it off the public list.
+- The seed writes stages as **already closed**. To exercise the live flow
+  (open → vote → close → tiebreak) use the smoke test below instead.
+
+### Testing the voting flow end to end
+
+`npm run smoke:competition` drives a fresh competition from draft to a declared
+winner against a running API. It creates its own accounts and competition and
+deletes them afterwards.
+
+```powershell
+npm run dev:stack:bg
+$env:SEED_ADMIN_PASSWORD = '<the seeded admin password>'
+npm run smoke:competition
+```
+
+It checks the rules that are easy to get wrong: a stage cannot open before the
+previous one closes, a stage with no votes cannot close, a tie across the cut
+blocks the next stage until an admin resolves it, a second vote is refused, and
+the quarterfinal and semifinal stay readable after the final.
+
+---
+
+## Competition voting
+
+A competition runs quarterfinal → semifinal → final. Nothing advances on a
+timer: an admin opens a stage, people vote, an admin closes it, and the
+advancers become the next stage's entrants.
+
+### Running one
+
+1. Seed or create the competition (`npm run db:seed:competition` for the demo).
+2. Open `/competitions/<slug>` as an admin. The **Organiser controls** panel is
+   at the bottom of the page.
+3. **Open voting** on the quarterfinal. It needs at least two entrants.
+4. When voting is done, **Close voting**. The result is published immediately.
+5. **Open voting** on the semifinal. Its entrants are the quarterfinal's
+   advancers, carried forward automatically.
+6. Repeat for the final. Closing the final declares the winner.
+
+### The committee
+
+Committee members are appointed per competition by an admin, by email. They are
+ordinary accounts — the appointment is not a site role.
+
+- **Add** — enter the account's email and a role (`member` or `chair`).
+- **Remove** — a soft delete. The row stays, so the member's past votes remain
+  attributable, and the removal reason is kept. Re-adding the same email
+  restores the membership.
+- A removed member can no longer vote in a committee-only competition.
+
+Every appointment, removal, stage change, tiebreak and invalidation is written
+to the audit log (`/admin` → Audit).
+
+### Ties
+
+Ties are never broken automatically. Equal votes share a rank, and a tie that
+straddles the advancing cut is shown on the results page and blocks the next
+stage. The organiser resolves it in **Organiser controls** by choosing who
+advances and giving a reason; the decision is published on the stage and
+recorded in the audit log.
+
+### The device rule
+
+Live, a vote is bound to one device per account. The browser keeps a random
+token in `localStorage` and the API stores only its hash.
+
+- The rule applies **only when a device token is presented**, so seeded and test
+  votes still work.
+- A browser that blocks storage votes without one.
+- **Clearing site data presents a new device.** If that matters for a
+  competition, use `voterScope: 'account'` or `'committee'` — those bind the
+  vote to the account, and the device rule is an additional check on top.
+
+### Checking a result
+
+- The public page shows every stage with each entrant's votes, share, rank and
+  outcome — including the eliminated ones.
+- `GET /api/competitions/:slug/stages/:stageId/votes` (admin) is the ledger:
+  who voted, for what, and whether it counted.
+- An invalidated vote stops counting everywhere but stays in the ledger.
+
+---
+
 ## Common tasks
 
 ```powershell
@@ -349,6 +491,16 @@ npm run lint
 
 Run before every PR. They are what CI runs.
 
+Smoke tests need a running stack and a database. Each creates and deletes its
+own fixtures:
+
+| Command | Needs | Checks |
+|---|---|---|
+| `npm run smoke:competition` | API + `SEED_ADMIN_PASSWORD` | Three-stage voting, committee add/remove, ties, the winner |
+| `npm run smoke:account-flows` | API | Sign-up, reset, confirmation, deletion |
+| `npm run smoke:confirmation-export` | API | Confirmation links and data export |
+| `npm run smoke:sync-estimate` | API | Server-side lyric sync estimation |
+
 ---
 
 ## Troubleshooting
@@ -366,6 +518,12 @@ Run before every PR. They are what CI runs.
 | Edits do nothing (API) | `tsc --watch` needs polling over bind mounts — configured in `apps/api/tsconfig.json` under `watchOptions`. Don't remove it. |
 | Edits do nothing (web) | Confirm you are on the **dev** container (`drill-lyrics-key-dev-web`). The production-shaped web serves a compiled build and never hot-reloads. |
 | `port is already allocated` | Another stack or a local Postgres is running. Stop it (`npm run dev:stack:down` / `npm run stack:down`) or change `*_PORT` in `.env`. |
+| `P1000 Authentication failed` from Prisma | Something else owns the port in `DATABASE_URL` — commonly a native PostgreSQL service on 5432 shadowing the Docker container. Check with `Get-NetTCPConnection -LocalPort 5432 -State Listen`, then point `DATABASE_URL` at a free port. |
+| Competition page 404s | The competition is `draft`. Drafts are hidden from everyone but staff. |
+| "Close the quarterfinal before opening this stage" | Stages open in order. Close the previous one first. |
+| "The quarterfinal is tied across its cut line" | Resolve the tie in **Organiser controls** before opening the next stage. |
+| "You have already voted in this stage" | One vote per voter per stage. Set `allowVoteChange` on the competition to permit a change. |
+| "This account has already voted from another device" | The device rule. The account voted from a different browser; clear it by invalidating the vote in the ledger, or use `voterScope: 'account'`. |
 | Pages load but API calls fail | `NEXT_PUBLIC_API_URL` was wrong when built. Fix it, then `npm run stack:up` (rebuild) or restart the dev stack. |
 | `initdb: not found` | The image is stale — rebuild: `npm run dev:stack` / `npm run stack:up`. |
 | Want a clean slate | `npm run dev:stack:reset` then `npm run dev:stack`. |
@@ -383,8 +541,8 @@ npm install
 Copy-Item .env.example .env     # edit DATABASE_URL
 npm run prisma:migrate
 npm run db:seed
-npm run dev                     # web → http://localhost:3000
-npm run dev:api                 # api → http://localhost:4000
+npm run dev                     # web → http://localhost:3100
+npm run dev:api                 # api → http://localhost:4100
 ```
 
 ---
@@ -473,7 +631,7 @@ Keep `MAIL_PROVIDER=mock` and read the link from the log:
 docker compose -f infra/docker-compose.dev.yml logs api | Select-String "reset-password/" | Select-Object -Last 1
 ```
 
-Then open `http://localhost:3000/reset-password/<token>`. The link works once;
+Then open `http://localhost:3100/reset-password/<token>`. The link works once;
 opening it again says it is invalid, which is the intended behaviour.
 
 The same applies to confirmation links (sent on sign-up):
@@ -482,7 +640,7 @@ The same applies to confirmation links (sent on sign-up):
 docker compose -f infra/docker-compose.dev.yml logs api | Select-String "confirm-email/" | Select-Object -Last 1
 ```
 
-Open `http://localhost:3000/confirm-email/<token>`. A second visit reports
+Open `http://localhost:3100/confirm-email/<token>`. A second visit reports
 "already confirmed" — that is not an error.
 
 ### Account page tools
@@ -527,8 +685,8 @@ npm run test:e2e
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `E2E_WEB_URL` | `http://localhost:3000` | Web origin under test |
-| `E2E_API_URL` | `http://localhost:4000` | API origin for fixtures and readiness |
+| `E2E_WEB_URL` | `http://localhost:3100` | Web origin under test |
+| `E2E_API_URL` | `http://localhost:4100` | API origin for fixtures and readiness |
 | `E2E_ADMIN_EMAIL` | `admin@drillke.local` | Seeded admin (`SEED_ADMIN_EMAIL`) |
 | `E2E_ADMIN_PASSWORD` | — | Seeded admin password; the suite **skips** without it |
 | `E2E_SONG_SLUG` | `masicka-update-official-video` | Published song the fixture submits against |

@@ -8,8 +8,15 @@
 #
 #   Two long-running containers (same shape as production):
 #
-#     drill-lyrics-key-dev-api   NestJS API  +  PostgreSQL 16  → http://localhost:4000
-#     drill-lyrics-key-dev-web   Next.js dev server            → http://localhost:3000
+#     drill-lyrics-key-dev-api   NestJS API  +  PostgreSQL 16  → http://localhost:4100
+#     drill-lyrics-key-dev-web   Next.js dev server            → http://localhost:3100
+#
+# PORTS
+#   The host ports are this project's own range (web 3100 · api 4100 · db 5440,
+#   see .env). They are chosen so DrillKe, The Expertise Wins (3200/3201/5441)
+#   and AppKings Voting (3300/3301/5442) can all run at the same time. Only the
+#   container-side ports (3000/4000/5432) are fixed; the fallbacks below match
+#   .env so a checkout without one still starts on the isolated ports.
 #
 #   One one-shot job runs first and exits:
 #
@@ -79,8 +86,22 @@ services:
   #
   # Dependencies are installed only when the manifests changed, so a Start on a
   # prepared volume costs a stamp comparison.
+  #
+  # PROFILE-GATED: this is a one-shot job, not a service, and it is hidden from
+  # the normal stack so `docker compose ps` shows exactly the two containers the
+  # app actually runs. It is started explicitly when the dependency volume needs
+  # building:
+  #
+  #   docker compose -f infra/docker-compose.dev.yml --profile setup run --rm install
+  #   (or: npm run dev:stack:install)
+  #
+  # `api` and `web` therefore do NOT depend on it. They used to, which meant the
+  # exited container had to stay behind forever or `up` would fail with
+  # "api is missing dependency install". The entrypoint now checks the volume
+  # itself and says what to run if it is empty.
   install:
     <<: *dev-base
+    profiles: ["setup"]
     working_dir: /app
     restart: "no"
     init: true
@@ -137,8 +158,10 @@ services:
       NODE_ENV: development
       PORT: "4000"
       # Postgres server binaries live in a versioned dir that is not on PATH.
-      # (Compose merges env over the image's ENV, so re-declare it here.)
-      PATH: /usr/lib/postgresql/16/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      # The image records the major version it installed in /etc/drillke-pg-bin
+      # (Debian's package, not PGDG), so the entrypoint finds them without this
+      # being pinned to a version that the base image may not ship.
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       DATABASE_URL: postgresql://${POSTGRES_USER:-drillke}:${POSTGRES_PASSWORD:-drillke}@localhost:5432/${POSTGRES_DB:-drillke}?schema=public
       POSTGRES_DB: ${POSTGRES_DB:-drillke}
       POSTGRES_USER: ${POSTGRES_USER:-drillke}
@@ -155,14 +178,21 @@ services:
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     ports:
-      - "${API_PORT:-4000}:4000"
-      - "${DB_PORT:-5432}:5432"
+      - "${API_PORT:-4100}:4000"
+      # The database is INTERNAL to this container: the API reaches it over
+      # localhost, and nothing else needs it. Publishing it is only for
+      # connecting a host psql / Prisma Studio, so it is bound to loopback and
+      # to this project's own port (5440) — 5432 collides with any PostgreSQL
+      # installed on the machine (a Windows service, another stack) and with the
+      # other two projects, which fails the whole stack with
+      # "Bind for 0.0.0.0:5432 failed".
+      #
+      # A DB_PORT value may include a host, e.g. `127.0.0.1:5440` or just `5440`.
+      # To publish nothing at all, set DB_PORT=127.0.0.1:0 in .env.
+      - "${DB_PORT:-127.0.0.1:5440}:5432"
     volumes:
       - ..:/app
       - node_modules:/app/node_modules
-    depends_on:
-      install:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/health/ready"]
       interval: 10s
@@ -181,22 +211,22 @@ services:
     environment:
       NODE_ENV: development
       NEXT_TELEMETRY_DISABLED: "1"
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
-      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      # Must match what .env bakes in: the BROWSER origin, i.e. the ports this
+      # stack publishes on the host (4100 api, 3100 web) — not 3000/4000.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4100}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3100}
       # Docker DNS for server components; the browser uses NEXT_PUBLIC_API_URL.
       API_INTERNAL_URL: http://api:4000
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${WEB_PORT:-3100}:3000"
     volumes:
       - ..:/app
       - node_modules:/app/node_modules
       # Keep the compiled output out of the bind mount (Linux-native + fast).
       - next_cache:/app/apps/web/.next
     depends_on:
-      install:
-        condition: service_completed_successfully
       # The web server renders pages server-side from the API. Without this, a
       # Start on a stopped stack boots web first, every request logs
       # `connect ECONNREFUSED api:4000`, and the page shows an error until the

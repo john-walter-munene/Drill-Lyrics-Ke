@@ -87,7 +87,13 @@ export class AdminService {
     if (!resolved.ok) throw new ConflictException({ message: 'One or more annotations are invalid', errors: resolved.errors });
     const result = await this.prisma.$transaction(async (tx) => {
       const version = await this.createVersion(tx, submission.songId, parsed.lyrics, resolved.annotations);
-      await tx.song.update({ where: { id: submission.songId }, data: { status: 'published', syncedVersionId: parsed.lyrics.syncStatus === 'synchronized' ? version.id : null } });
+      const synchronized = parsed.lyrics.syncStatus === 'synchronized';
+      await tx.song.update({
+        where: { id: submission.songId },
+        // `syncedAt` moves with `syncedVersionId`: the catalogue's
+        // `sort=recently-synced` orders by it, so the two must never disagree.
+        data: { status: 'published', syncedVersionId: synchronized ? version.id : null, syncedAt: synchronized ? new Date() : null },
+      });
       await tx.lyricsSubmission.update({ where: { id }, data: { status: 'published', publishedVersionId: version.id, reviewerId: actorId, reviewedAt: new Date(), reviewNote: null } });
       await tx.auditLog.create({ data: { actorId, action: 'lyrics.approved', entity: 'lyrics_submission', entityId: id, meta: { versionId: version.id, annotations: resolved.annotations.length } } });
       return { id, status: 'published', versionId: version.id };
@@ -123,7 +129,11 @@ export class AdminService {
         if (submission.publishedVersionId) {
           await tx.lyricVersion.update({ where: { id: submission.publishedVersionId }, data: { published: false } });
         }
-        await tx.song.update({ where: { id: submission.songId }, data: { syncedVersionId: parsed.lyrics.syncStatus === 'synchronized' ? version.id : null } });
+        const synchronized = parsed.lyrics.syncStatus === 'synchronized';
+        await tx.song.update({
+          where: { id: submission.songId },
+          data: { syncedVersionId: synchronized ? version.id : null, syncedAt: synchronized ? new Date() : null },
+        });
         await tx.lyricsSubmission.update({ where: { id }, data: { markdown, publishedVersionId: version.id } });
         versionId = version.id;
       } else {
@@ -174,7 +184,7 @@ export class AdminService {
       const submission = await tx.lyricsSubmission.findUnique({ where: { id }, include: { publishedVersion: true } });
       if (!submission?.publishedVersion) throw new NotFoundException('Published lyrics version not found');
       await tx.lyricVersion.update({ where: { id: submission.publishedVersion.id }, data: { published: false } });
-      await tx.song.updateMany({ where: { id: submission.songId, syncedVersionId: submission.publishedVersion.id }, data: { syncedVersionId: null } });
+      await tx.song.updateMany({ where: { id: submission.songId, syncedVersionId: submission.publishedVersion.id }, data: { syncedVersionId: null, syncedAt: null } });
       await tx.lyricsSubmission.update({ where: { id }, data: { status: 'unpublished', reviewNote: reason ?? null, reviewerId: actorId, reviewedAt: new Date() } });
       await tx.auditLog.create({ data: { actorId, action: 'lyrics.unpublished', entity: 'lyrics_submission', entityId: id, meta: { reason: reason ?? null } } });
       return { id, status: 'unpublished' };
