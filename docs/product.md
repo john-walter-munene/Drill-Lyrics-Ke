@@ -203,12 +203,25 @@ Rules that keep these cheap to run:
 ```text
 member submits  →  validated server-side  →  pending
                                               │
-                                  reviewer: approve / request changes / reject
-                                              │
-                                        new LyricVersion (immutable once approved)
-                                              │
-                                       published → indexed
+                          ┌───────────────────┼───────────────────┐
+                          ▼                   ▼                   ▼
+                      approved        changes requested        rejected
+                          │                   │                   │
+                          │             contributor edits      terminal
+                          │             and resends (PUT)        │
+                          │                   │
+                          │                   └──────► pending
+                          │                              │
+                    new LyricVersion (immutable once approved)
+                          │
+                   published → indexed
 ```
+
+"Request changes" is only useful if the contributor can then change something.
+The resubmit route is what makes that note actionable: the contributor edits the
+same submission (prefilled, not retyped) and it returns to `pending`, so the
+reviewer sees a corrected row rather than a duplicate beside the original.
+Rejection stays terminal.
 
 - Lyrics are **versioned**: approving an edit creates a new version rather than
   mutating the old one, so rollback is just "publish version N-1".

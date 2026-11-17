@@ -5,7 +5,7 @@ import {
   parseLyricsDocument,
   serializeLyricsDocument,
   type LyricsDocument,
-} from './lyrics-markdown.ts';
+} from '../../../../packages/shared/src/lyrics-markdown.ts';
 
 const VALID = `---
 title: "Example Track"

@@ -6,7 +6,7 @@ import {
   DEFAULT_SONG_SORT,
   pageNumber,
   parseCatalogueQuery,
-} from './catalogue-query.ts';
+} from '../../../../packages/shared/src/catalogue-query.ts';
 
 /**
  * The catalogue query contract.

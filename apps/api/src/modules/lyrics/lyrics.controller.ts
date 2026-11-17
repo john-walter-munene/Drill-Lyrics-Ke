@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
@@ -11,6 +12,7 @@ import type { Role } from '@drillke/shared';
 import { Roles, RolesGuard } from '../../common/roles.guard';
 import { writeThrottle } from '../../common/throttling';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
+import { ResubmitSubmissionDto } from './dto/resubmit-submission.dto';
 import { LyricsService } from './lyrics.service';
 import { CurrentUser } from '../../common/current-user.decorator';
 import type { SessionUser } from '../../common/session-auth.guard';
@@ -49,6 +51,23 @@ export class LyricsController {
   @SkipThrottle()
   byId(@Param('id') id: string, @CurrentUser() user?: SessionUser) {
     return this.lyrics.submissionById(id, user?.id);
+  }
+
+  /**
+   * Edit and resend a submission a reviewer asked for changes on.
+   *
+   * Throttled like a create: it writes the same content to the same table, and a
+   * contributor corrected once should not be able to hammer the queue with
+   * rewrites any more than with new submissions.
+   */
+  @Put('submissions/:id')
+  @Throttle(writeThrottle())
+  resubmit(
+    @Param('id') id: string,
+    @Body() dto: ResubmitSubmissionDto,
+    @CurrentUser() user?: SessionUser,
+  ) {
+    return this.lyrics.resubmit(id, dto, user?.id);
   }
 }
 

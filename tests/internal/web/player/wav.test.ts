@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { decodeWav } from '../../../api/src/library/audio-decode.ts';
-import { encodeWav, UPLOAD_SAMPLE_RATE } from './wav.ts';
+import { decodeWav } from '../../../../apps/api/src/library/audio-decode.ts';
+import { encodeWav, UPLOAD_SAMPLE_RATE } from '../../../../apps/web/app/admin/wav.ts';
 
 /**
  * The upload path only works if the browser writes what the API reads, so the

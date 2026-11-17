@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectPublishedVersion } from './published-version.ts';
+import { selectPublishedVersion } from '../../../../apps/api/src/modules/songs/published-version.ts';
 
 /**
  * Which lyric version the public lyrics endpoint serves.

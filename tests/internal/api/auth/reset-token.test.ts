@@ -9,7 +9,7 @@ import {
   hashResetToken,
   isTokenUsable,
   looksLikeResetToken,
-} from './reset-token.ts';
+} from '../../../../apps/api/src/modules/auth/reset-token.ts';
 
 test('createResetToken returns 256 bits of base64url', () => {
   const token = createResetToken();

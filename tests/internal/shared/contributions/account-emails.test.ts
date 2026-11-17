@@ -6,7 +6,7 @@ import {
   buildPasswordResetEmail,
   EMAIL_CONFIRMATION_TTL_DAYS,
   PASSWORD_RESET_TTL_MINUTES,
-} from './account-emails.ts';
+} from '../../../../packages/shared/src/account-emails.ts';
 
 const RESET_URL = 'https://drillke.com/reset-password/abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG';
 

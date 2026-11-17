@@ -156,9 +156,17 @@ export default tseslint.config(
     },
   },
 
-  // Tests build throwaway fixtures, so `any` is allowed there.
+  // Unit tests live in `tests/internal/**`, grouped by the feature they target
+  // (see tests/internal/README.md). They build throwaway fixtures, so `any` is
+  // allowed, and they import both Node and browser code, so both global sets
+  // are available rather than making a test declare which half it is.
   {
-    files: ['**/*.test.ts'],
+    files: ['**/*.test.ts', 'tests/**/*.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
+      globals: browserGlobals,
+    },
     plugins: { '@typescript-eslint': tseslint.plugin },
     rules: {
       ...sharedRules,

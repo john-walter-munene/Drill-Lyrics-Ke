@@ -8,7 +8,7 @@ import {
   deviceVoteDecision,
   tallyStage,
   type StageInput,
-} from './competition.ts';
+} from '../../../../packages/shared/src/competition.ts';
 
 /**
  * The three-stage voting rules. These are the numbers an organiser publishes, so

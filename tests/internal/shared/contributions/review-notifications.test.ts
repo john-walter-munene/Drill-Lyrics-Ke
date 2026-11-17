@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildReviewNotification, shouldNotify } from './review-notifications.ts';
+import { buildReviewNotification, shouldNotify } from '../../../../packages/shared/src/review-notifications.ts';
 
 const base = {
   songTitle: 'Example Track',
